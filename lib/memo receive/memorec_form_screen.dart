@@ -92,6 +92,7 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
   final RxString _selectedColor = ''.obs;
   final RxString _selectedShape = ''.obs;
   final RxString _selectedRoughTypeCode = '1'.obs;
+  final Rxn<int> _selectedRoughPurMstID = Rxn<int>();
 
   DateTime? selectedDate;
   DateTime? fromDate;
@@ -505,6 +506,7 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
           ? detail.shapeCode.toString()
           : '';
       _selectedRoughTypeCode.value = (detail.roughTypeCode ?? 1).toString();
+      _selectedRoughPurMstID.value = detail.roughPurMstID;
       descripController.text = detail.description ?? '';
 
       final int pcs = detail.pcs ?? 1;
@@ -582,6 +584,7 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
     _selectedEntryId.value = '';
     _selectedItemType.value = 'ROUGH';
     invNoItemController.clear();
+    _selectedRoughPurMstID.value = null;
     _selectedClarity.value = '';
     _selectedCharni.value = '';
     _selectedQuality.value = '';
@@ -625,18 +628,41 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
       return;
     }
 
+    final double penWt = double.tryParse(penWtController.text.trim()) ?? 0.0;
+    final double issuedWt = double.tryParse(wtController.text.trim()) ?? 0.0;
+    final double maxAllowed = penWt > 0 ? penWt : issuedWt;
+
+    if (maxAllowed > 0 && totalWt > (maxAllowed + 0.0001)) {
+      infoDialog(
+        messageText:
+            'Total return weight (${totalWt.toStringAsFixed(3)}) cannot be greater than pending/issued weight (${maxAllowed.toStringAsFixed(3)}).',
+      );
+      _recWtFocus.requestFocus();
+      return;
+    }
+
     final double rateRs = double.tryParse(rateRsController.text.trim()) ?? 0.0;
     final double rateD = double.tryParse(rateDollarController.text.trim()) ?? 0.0;
 
     final entryData = {
+      if (_editingEntryIndex != null &&
+          _editingEntryIndex! < recEntries.length &&
+          recEntries[_editingEntryIndex!].containsKey('id'))
+        'id': recEntries[_editingEntryIndex!]['id'],
       'detId': _selectedEntryId.value,
       'type': _selectedItemType.value,
       'invNo': invNoItemController.text.trim(),
+      'roughPurMstID': _selectedRoughPurMstID.value,
       'quality': _selectedQuality.value,
+      'qualityCode': int.tryParse(_selectedQuality.value),
       'shape': _selectedShape.value,
+      'shapeCode': int.tryParse(_selectedShape.value),
       'color': _selectedColor.value,
+      'colorCode': int.tryParse(_selectedColor.value),
       'clarity': _selectedClarity.value,
+      'clarityCode': int.tryParse(_selectedClarity.value),
       'charni': _selectedCharni.value,
+      'charniCode': int.tryParse(_selectedCharni.value),
       'pcs': pcsController.text.trim(),
       'wt': wtController.text.trim(),
       'rateRs': rateRsController.text.trim(),
@@ -677,6 +703,10 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
       _selectedEntryId.value = entry['detId']?.toString() ?? '';
       _selectedItemType.value = entry['type']?.toString() ?? 'ROUGH';
       invNoItemController.text = entry['invNo']?.toString() ?? '';
+      final rawRpmId = entry['roughPurMstID'];
+      _selectedRoughPurMstID.value = rawRpmId is int
+          ? rawRpmId
+          : int.tryParse(rawRpmId?.toString() ?? '');
       _selectedQuality.value = entry['quality']?.toString() ?? '';
       _selectedShape.value = entry['shape']?.toString() ?? '';
       _selectedColor.value = entry['color']?.toString() ?? '';
@@ -739,8 +769,9 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
     final int? fromUserId = _selectedFromManagerId.value;
     final String party = _selectedTypeParty.value.isNotEmpty ? _selectedTypeParty.value : '1';
 
+    bool ok = false;
     if (_isFromEdit) {
-      await defaultController.updateMemoRecData(
+      ok = await defaultController.updateMemoRecData(
         id: selectedMemoRecMstID.value,
         partyCode: party,
         invoiceDate: selectedDate ?? DateTime.now(),
@@ -748,26 +779,55 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
         fromUserId: fromUserId,
         entries: recEntries,
         totalAmt: totalRecAmountRs,
-        totalWt: totalRecWt,
+        totalWt: totalFinalWt,
+        totalRecWt: totalRecWt,
+        totalRecAmount: totalRecAmountRs,
+        totalLossWt: totalLossWt,
         totalRate: totalRateRs,
+        totalPacket: totalPacket,
+        totalRecPcs: totalRecPcs,
+        totalIssWt: totalWt,
+        totalSaleWt: totalSaleWt,
+        totalOutWt: totalOutWt,
+        totalFinalWt: totalFinalWt,
+        totalRecAmountDollar: totalRecAmountDollar,
+        totalRateDollar: totalRateDollar,
         printInvoice: false,
       );
-      _handleCancel();
     } else {
-      await defaultController.addMemoRecData(
+      ok = await defaultController.addMemoRecData(
         partyCode: party,
         invoiceDate: selectedDate ?? DateTime.now(),
         brokerCode: _selectedTypeBroker.value,
         fromUserId: fromUserId,
         entries: recEntries,
         totalAmt: totalRecAmountRs,
-        totalWt: totalWt,
+        totalWt: totalFinalWt,
         totalRecWt: totalRecWt,
         totalRecAmount: totalRecAmountRs,
         totalLossWt: totalLossWt,
         totalRate: totalRateRs,
+        totalPacket: totalPacket,
+        totalRecPcs: totalRecPcs,
+        totalIssWt: totalWt,
+        totalSaleWt: totalSaleWt,
+        totalOutWt: totalOutWt,
+        totalFinalWt: totalFinalWt,
+        totalRecAmountDollar: totalRecAmountDollar,
+        totalRateDollar: totalRateDollar,
         printInvoice: false,
       );
+    }
+
+    if (ok == true) {
+      await defaultController.getMemoRecData(force: true);
+      await defaultController.getMemoRecDetailsData(force: true);
+      await defaultController.getMemoIssueDetailsData(force: true);
+      if (_isFiltered.value) {
+        _applyDateFilter();
+      } else {
+        memoRecDataGridSource.value = List<MemoRecModel>.from(defaultController.memoRecList);
+      }
       _handleCancel();
     }
   }
@@ -778,11 +838,21 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
       return;
     }
 
-    await defaultController.deleteMemoRecData(
+    final bool ok = await defaultController.deleteMemoRecData(
       id: selectedMemoRecMstID.value,
       entries: recEntries.map((e) => e.map((k, v) => MapEntry(k, v?.toString() ?? ''))).toList(),
     );
-    _handleCancel();
+    if (ok == true) {
+      await defaultController.getMemoRecData(force: true);
+      await defaultController.getMemoRecDetailsData(force: true);
+      await defaultController.getMemoIssueDetailsData(force: true);
+      if (_isFiltered.value) {
+        _applyDateFilter();
+      } else {
+        memoRecDataGridSource.value = List<MemoRecModel>.from(defaultController.memoRecList);
+      }
+      _handleCancel();
+    }
   }
 
   void _handleCancel() {
@@ -804,9 +874,10 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
   void _selectMemoById(int id) {
     selectedMemoRecMstID.value = id;
 
-    final MemoRecModel partyEntry = defaultController.memoRecList.firstWhere(
+    final MemoRecModel? partyEntry = defaultController.memoRecList.firstWhereOrNull(
       (entry) => entry.memoRecMstID == id,
     );
+    if (partyEntry == null) return;
 
     final List<MemoRecDetailsModel> roughEntries = defaultController.memoRecDetailsList
         .where((entry) => entry.memoRecMstID == id)
@@ -839,11 +910,17 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
         'detId': roughEntry.memoIssueDetID?.toString() ?? '',
         'type': roughEntry.type ?? 'ROUGH',
         'invNo': roughEntry.invNo ?? '',
+        'roughPurMstID': roughEntry.roughPurMstID,
         'quality': roughEntry.qualityCode?.toString() ?? '',
+        'qualityCode': roughEntry.qualityCode,
         'shape': roughEntry.shapeCode?.toString() ?? '',
+        'shapeCode': roughEntry.shapeCode,
         'color': roughEntry.colorCode?.toString() ?? '',
+        'colorCode': roughEntry.colorCode,
         'clarity': roughEntry.clarityCode?.toString() ?? '',
+        'clarityCode': roughEntry.clarityCode,
         'charni': roughEntry.charniCode?.toString() ?? '',
+        'charniCode': roughEntry.charniCode,
         'pcs': (roughEntry.pcs ?? 1).toString(),
         'wt': carats.toStringAsFixed(3),
         'rateRs': rateRs.toStringAsFixed(2),
@@ -909,10 +986,23 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
 
       return AppKeyboardShortcutHandler(
         onAdd: !_isEnabled ? () => _enableFields() : null,
+        onEdit: (_isFromEdit && !_isEnabled)
+            ? () {
+                setState(() => _isEnabled = true);
+                Future.delayed(const Duration(milliseconds: 100), () {
+                  _entryFocus.requestFocus();
+                });
+              }
+            : null,
         onSave: _isEnabled ? _handleSave : null,
         onDelete: (_isEnabled && _isFromEdit) ? _handleDelete : null,
-        onCancel: _isEnabled ? _handleCancel : null,
-        onSearch: () => setState(() => _isSearch = true),
+        onCancel: (_isEnabled || _isFromEdit) ? _handleCancel : null,
+        onSearch: () async {
+          await defaultController.getMemoRecData(force: true);
+          await defaultController.getMemoRecDetailsData(force: true);
+          memoRecDataGridSource.value = List<MemoRecModel>.from(defaultController.memoRecList);
+          setState(() => _isSearch = true);
+        },
         onExit: () => tabController.closeCurrentTab(),
         child: Scaffold(
           backgroundColor: AppColors.background,
@@ -1325,7 +1415,21 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
                   controller: recWtController,
                   focusNode: _recWtFocus,
                   nextFocusNode: _saleWtFocus,
-                  onFieldSubmitted: (_) => _saleWtFocus.requestFocus(),
+                  onFieldSubmitted: (_) {
+                    final double recWt = double.tryParse(recWtController.text.trim()) ?? 0.0;
+                    final double penWt = double.tryParse(penWtController.text.trim()) ?? 0.0;
+                    final double issuedWt = double.tryParse(wtController.text.trim()) ?? 0.0;
+                    final double maxAllowed = penWt > 0 ? penWt : issuedWt;
+                    if (maxAllowed > 0 && recWt > (maxAllowed + 0.0001)) {
+                      infoDialog(
+                        messageText:
+                            'Rec Wt (${recWt.toStringAsFixed(3)}) cannot be greater than pending/issued weight (${maxAllowed.toStringAsFixed(3)}).',
+                      );
+                      _recWtFocus.requestFocus();
+                      return;
+                    }
+                    _saleWtFocus.requestFocus();
+                  },
                   enabled: _isEnabled,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   inputFormatters: [
@@ -1768,7 +1872,7 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
                                             mainAxisAlignment: MainAxisAlignment.center,
                                             children: [
                                               InkWell(
-                                                onTap: () => _editEntry(i),
+                                                onTap: _isEnabled ? () => _editEntry(i) : null,
                                                 borderRadius: BorderRadius.circular(4),
                                                 child: Padding(
                                                   padding: const EdgeInsets.all(4),
@@ -1777,20 +1881,27 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
                                                         ? Icons.edit_rounded
                                                         : Icons.edit_outlined,
                                                     size: 15,
-                                                    color: _editingEntryIndex == i
-                                                        ? AppColors.warning
-                                                        : AppColors.primary,
+                                                    color: !_isEnabled
+                                                        ? AppColors.textSecondary.withValues(alpha: 0.4)
+                                                        : (_editingEntryIndex == i
+                                                            ? AppColors.warning
+                                                            : AppColors.primary),
                                                   ),
                                                 ),
                                               ),
                                               const SizedBox(width: 6),
                                               InkWell(
-                                                onTap: () => _deleteEntry(i),
+                                                onTap: _isEnabled ? () => _deleteEntry(i) : null,
                                                 borderRadius: BorderRadius.circular(4),
                                                 child: Padding(
                                                   padding: const EdgeInsets.all(4),
-                                                  child: Icon(Icons.delete_outline_rounded,
-                                                      size: 15, color: AppColors.danger),
+                                                  child: Icon(
+                                                    Icons.delete_outline_rounded,
+                                                    size: 15,
+                                                    color: !_isEnabled
+                                                        ? AppColors.textSecondary.withValues(alpha: 0.4)
+                                                        : AppColors.danger,
+                                                  ),
                                                 ),
                                               ),
                                             ],
@@ -1998,7 +2109,7 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
             text: 'Cancel',
             icon: Icons.cancel_outlined,
             variant: AppButtonVariant.secondary,
-            onPressed: _isEnabled ? _handleCancel : null,
+            onPressed: (_isEnabled || _isFromEdit) ? _handleCancel : null,
           ),
           AppButton(
             text: 'Exit',
@@ -2010,7 +2121,12 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
             text: 'Search',
             icon: Icons.search_rounded,
             variant: AppButtonVariant.outline,
-            onPressed: () => setState(() => _isSearch = true),
+            onPressed: () async {
+              await defaultController.getMemoRecData(force: true);
+              await defaultController.getMemoRecDetailsData(force: true);
+              memoRecDataGridSource.value = List<MemoRecModel>.from(defaultController.memoRecList);
+              setState(() => _isSearch = true);
+            },
           ),
         ],
       ),
@@ -2031,8 +2147,14 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
           if (event.logicalKey == LogicalKeyboardKey.enter) {
             final DataGridRow? selectedRow = _dataGridController.selectedRow;
             if (selectedRow != null) {
-              final id = selectedRow.getCells()[0].value;
-              _selectMemoById(id);
+              final idCell = selectedRow
+                  .getCells()
+                  .firstWhereOrNull((c) => c.columnName == 'ID');
+              final dynamic idVal = idCell?.value ?? selectedRow.getCells()[0].value;
+              if (idVal != null) {
+                final int id = idVal is int ? idVal : int.tryParse(idVal.toString()) ?? 0;
+                if (id > 0) _selectMemoById(id);
+              }
             }
           } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
             if (currentIndex < totalRows - 1) {
@@ -2182,98 +2304,228 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(10),
                     child: Obx(
-                      () => memoRecDataGridSource.isEmpty
-                          ? Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.inventory_2_outlined, size: 40, color: AppColors.textMuted),
-                                  const SizedBox(height: 8),
-                                  Text('No Memo Return records found',
-                                      style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
-                                ],
-                              ),
-                            )
-                          : AppDataGrid(
-                              source: MemoReceiveDataGridSource(memoRecDataGridSource),
-                              controller: _dataGridController,
-                              selectionMode: SelectionMode.single,
-                              onSelectionChanged: (addedRows, removedRows) {
-                                if (addedRows.isNotEmpty) {
-                                  final int id = addedRows.first.getCells()[0].value;
-                                  _selectMemoById(id);
-                                }
-                              },
-                              columns: [
-                                GridColumn(
-                                  columnName: 'ID',
-                                  label: Container(
-                                    alignment: Alignment.centerLeft,
-                                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                                    child: Text('ID', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-                                  ),
-                                ),
-                                GridColumn(
-                                  columnName: 'Date',
-                                  label: Container(
-                                    alignment: Alignment.centerLeft,
-                                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                                    child: Text('Date', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-                                  ),
-                                ),
-                                GridColumn(
-                                  columnName: 'Party',
-                                  label: Container(
-                                    alignment: Alignment.centerLeft,
-                                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                                    child: Text('Party', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-                                  ),
-                                ),
-                                GridColumn(
-                                  columnName: 'Broker',
-                                  label: Container(
-                                    alignment: Alignment.centerLeft,
-                                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                                    child: Text('Broker', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-                                  ),
-                                ),
-                                GridColumn(
-                                  columnName: 'Tot Wt',
-                                  label: Container(
-                                    alignment: Alignment.centerRight,
-                                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                                    child: Text('Tot Wt', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-                                  ),
-                                ),
-                                GridColumn(
-                                  columnName: 'Tot Amt Rs',
-                                  label: Container(
-                                    alignment: Alignment.centerRight,
-                                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                                    child: Text('Tot Amt (₹)', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-                                  ),
-                                ),
-                              ],
-                              tableSummaryRows: [
-                                GridTableSummaryRow(
-                                  showSummaryInRow: false,
-                                  title: 'Total',
-                                  columns: [
-                                    const GridSummaryColumn(
-                                      name: 'SumTotWt',
-                                      columnName: 'Tot Wt',
-                                      summaryType: GridSummaryType.sum,
-                                    ),
-                                    const GridSummaryColumn(
-                                      name: 'SumTotAmt',
-                                      columnName: 'Tot Amt Rs',
-                                      summaryType: GridSummaryType.sum,
-                                    ),
-                                  ],
-                                  position: GridTableSummaryRowPosition.bottom,
-                                ),
+                      () {
+                        if (memoRecDataGridSource.isEmpty) {
+                          return Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.inventory_2_outlined, size: 40, color: AppColors.textMuted),
+                                const SizedBox(height: 8),
+                                Text('No Memo Return records found',
+                                    style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
                               ],
                             ),
+                          );
+                        }
+                        final searchSource = MemoReceiveDataGridSource(memoRecDataGridSource);
+                        return AppDataGrid(
+                          source: searchSource,
+                          controller: _dataGridController,
+                          selectionMode: SelectionMode.single,
+                          onCellDoubleTap: (details) {
+                            if (details.rowColumnIndex.rowIndex <= 0) return;
+                            final int dataRowIndex = details.rowColumnIndex.rowIndex - 1;
+                            final rows = searchSource.effectiveRows;
+                            if (dataRowIndex >= 0 && dataRowIndex < rows.length) {
+                              final row = rows[dataRowIndex];
+                              final idCell = row
+                                  .getCells()
+                                  .firstWhereOrNull((c) => c.columnName == 'ID');
+                              final dynamic idVal = idCell?.value ?? row.getCells()[0].value;
+                              if (idVal != null) {
+                                final int id = idVal is int ? idVal : int.tryParse(idVal.toString()) ?? 0;
+                                if (id > 0) _selectMemoById(id);
+                              }
+                            }
+                          },
+                          columns: [
+                            GridColumn(
+                              columnName: 'ID',
+                              width: 70,
+                              label: Container(
+                                alignment: Alignment.center,
+                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                child: Text('ID', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ),
+                            ),
+                            GridColumn(
+                              columnName: 'Date',
+                              width: 150,
+                              label: Container(
+                                alignment: Alignment.center,
+                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                child: Text('Date', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ),
+                            ),
+                            GridColumn(
+                              columnName: 'Party',
+                              label: Container(
+                                alignment: Alignment.centerLeft,
+                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                child: Text('Party', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ),
+                            ),
+                            GridColumn(
+                              columnName: 'Broker',
+                              label: Container(
+                                alignment: Alignment.centerLeft,
+                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                child: Text('Broker', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ),
+                            ),
+                            GridColumn(
+                              columnName: 'Packet',
+                              width: 80,
+                              label: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                child: Text('Packet', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ),
+                            ),
+                            GridColumn(
+                              columnName: 'Iss Wt',
+                              width: 90,
+                              label: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                child: Text('Iss Wt', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ),
+                            ),
+                            GridColumn(
+                              columnName: 'Rec Pcs',
+                              width: 80,
+                              label: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                child: Text('Rec Pcs', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ),
+                            ),
+                            GridColumn(
+                              columnName: 'Rec Wt',
+                              width: 90,
+                              label: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                child: Text('Rec Wt', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ),
+                            ),
+                            GridColumn(
+                              columnName: 'Sale Wt',
+                              width: 90,
+                              label: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                child: Text('Sale Wt', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ),
+                            ),
+                            GridColumn(
+                              columnName: 'Out Wt',
+                              width: 90,
+                              label: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                child: Text('Out Wt', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ),
+                            ),
+                            GridColumn(
+                              columnName: 'Loss Wt',
+                              width: 90,
+                              label: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                child: Text('Loss Wt', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ),
+                            ),
+                            GridColumn(
+                              columnName: 'Total Wt',
+                              width: 95,
+                              label: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                child: Text('Total Wt', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ),
+                            ),
+                            GridColumn(
+                              columnName: 'Tot Amt Rs',
+                              width: 120,
+                              label: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                child: Text('Amount (₹)', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ),
+                            ),
+                            GridColumn(
+                              columnName: 'Tot Amt Dollar',
+                              width: 120,
+                              label: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                child: Text('Amount (\$)', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ),
+                            ),
+                          ],
+                          tableSummaryRows: [
+                            GridTableSummaryRow(
+                              showSummaryInRow: false,
+                              title: 'Total',
+                              columns: [
+                                const GridSummaryColumn(
+                                  name: 'SumPacket',
+                                  columnName: 'Packet',
+                                  summaryType: GridSummaryType.sum,
+                                ),
+                                const GridSummaryColumn(
+                                  name: 'SumIssWt',
+                                  columnName: 'Iss Wt',
+                                  summaryType: GridSummaryType.sum,
+                                ),
+                                const GridSummaryColumn(
+                                  name: 'SumRecPcs',
+                                  columnName: 'Rec Pcs',
+                                  summaryType: GridSummaryType.sum,
+                                ),
+                                const GridSummaryColumn(
+                                  name: 'SumRecWt',
+                                  columnName: 'Rec Wt',
+                                  summaryType: GridSummaryType.sum,
+                                ),
+                                const GridSummaryColumn(
+                                  name: 'SumSaleWt',
+                                  columnName: 'Sale Wt',
+                                  summaryType: GridSummaryType.sum,
+                                ),
+                                const GridSummaryColumn(
+                                  name: 'SumOutWt',
+                                  columnName: 'Out Wt',
+                                  summaryType: GridSummaryType.sum,
+                                ),
+                                const GridSummaryColumn(
+                                  name: 'SumLossWt',
+                                  columnName: 'Loss Wt',
+                                  summaryType: GridSummaryType.sum,
+                                ),
+                                const GridSummaryColumn(
+                                  name: 'SumTotalWt',
+                                  columnName: 'Total Wt',
+                                  summaryType: GridSummaryType.sum,
+                                ),
+                                const GridSummaryColumn(
+                                  name: 'SumTotAmtRs',
+                                  columnName: 'Tot Amt Rs',
+                                  summaryType: GridSummaryType.sum,
+                                ),
+                                const GridSummaryColumn(
+                                  name: 'SumTotAmtDollar',
+                                  columnName: 'Tot Amt Dollar',
+                                  summaryType: GridSummaryType.sum,
+                                ),
+                              ],
+                              position: GridTableSummaryRowPosition.bottom,
+                            ),
+                          ],
+                            );
+                      },
                     ),
                   ),
                 ),

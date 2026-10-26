@@ -16,63 +16,160 @@ class MemoReceiveDataGridSource extends DataGridSource {
         .where((e) => e.companyCode == defaultController.companyCode.value)
         .toList()
         .map<DataGridRow>((purchase) {
+      final details = defaultController.memoRecDetailsList
+          .where((d) => d.memoRecMstID == purchase.memoRecMstID)
+          .toList();
+
+      int packet;
+      double issWt;
+      int recPcs;
+      double recWt;
+      double saleWt;
+      double outWt;
+      double lossWt;
+      double totalWt;
+      double amtRs;
+      double amtDollar;
+
+      if (details.isNotEmpty) {
+        packet = details.fold<int>(0, (sum, d) => sum + (d.pcs ?? 0));
+        issWt = details.fold<double>(0.0, (sum, d) => sum + (double.tryParse(d.carats?.toString() ?? '0') ?? 0.0));
+        recPcs = details.fold<int>(0, (sum, d) => sum + (d.recPcs ?? 0));
+        recWt = details.fold<double>(0.0, (sum, d) => sum + (double.tryParse(d.recCarats?.toString() ?? '0') ?? 0.0));
+        saleWt = details.fold<double>(0.0, (sum, d) => sum + (double.tryParse(d.saleCarats?.toString() ?? '0') ?? 0.0));
+        outWt = details.fold<double>(0.0, (sum, d) => sum + (double.tryParse(d.outCarats?.toString() ?? '0') ?? 0.0));
+        lossWt = details.fold<double>(0.0, (sum, d) => sum + (double.tryParse(d.lossCarats?.toString() ?? '0') ?? 0.0));
+        totalWt = details.fold<double>(0.0, (sum, d) => sum + (double.tryParse(d.totalCarats?.toString() ?? '0') ?? 0.0));
+        if (totalWt == 0.0) {
+          totalWt = recWt + saleWt + outWt + lossWt;
+        }
+        amtRs = details.fold<double>(0.0, (sum, d) {
+          final rWt = double.tryParse(d.recCarats?.toString() ?? '0') ?? 0.0;
+          final rate = double.tryParse(d.rateRs?.toString() ?? '0') ?? 0.0;
+          return sum + (rWt * rate);
+        });
+        if (amtRs == 0.0) {
+          amtRs = double.tryParse(purchase.totRsAmt?.toString() ??
+                  purchase.finalRsAmount?.toString() ??
+                  purchase.tAmount?.toString() ??
+                  '0') ??
+              0.0;
+        }
+        amtDollar = details.fold<double>(0.0, (sum, d) {
+          final rWt = double.tryParse(d.recCarats?.toString() ?? '0') ?? 0.0;
+          final rateD = double.tryParse(d.rateD?.toString() ?? '0') ?? 0.0;
+          return sum + (rWt * rateD);
+        });
+        if (amtDollar == 0.0) {
+          amtDollar = double.tryParse(purchase.totUsdAmt?.toString() ??
+                  purchase.finalUsdAmount?.toString() ??
+                  purchase.tDAmount?.toString() ??
+                  '0') ??
+              0.0;
+        }
+      } else {
+        packet = purchase.tPcs ?? 0;
+        issWt = double.tryParse(purchase.issWt?.toString() ?? '0') ?? 0.0;
+        recPcs = purchase.recPcs ?? 0;
+        recWt = double.tryParse(purchase.recWt?.toString() ?? '0') ?? 0.0;
+        saleWt = double.tryParse(purchase.saleWt?.toString() ?? '0') ?? 0.0;
+        outWt = double.tryParse(purchase.outWt?.toString() ?? '0') ?? 0.0;
+        lossWt = double.tryParse(purchase.lossWt?.toString() ?? '0') ?? 0.0;
+        totalWt = double.tryParse(purchase.totalWt?.toString() ??
+                purchase.tWeight?.toString() ??
+                '0') ??
+            0.0;
+        amtRs = double.tryParse(purchase.totRsAmt?.toString() ??
+                purchase.finalRsAmount?.toString() ??
+                purchase.tAmount?.toString() ??
+                '0') ??
+            0.0;
+        amtDollar = double.tryParse(purchase.totUsdAmt?.toString() ??
+                purchase.finalUsdAmount?.toString() ??
+                purchase.tDAmount?.toString() ??
+                '0') ??
+            0.0;
+      }
+
       return DataGridRow(cells: [
         DataGridCell<int>(columnName: 'ID', value: purchase.memoRecMstID),
-        // DataGridCell<String>(
-        //     columnName: 'Invoice No', value: purchase.invoiceNo),
         DataGridCell<String>(
             columnName: 'Date',
-            value: formatDateWithTime(purchase.invoiceDate!)),
-        // DataGridCell<String>(
-        //     columnName: 'Rec Date', value: purchase.recdate),
+            value: purchase.invoiceDate != null && purchase.invoiceDate!.isNotEmpty
+                ? formatDateWithTime(purchase.invoiceDate!)
+                : ''),
         DataGridCell<String>(
             columnName: 'Party', value: getPartyName(purchase.partyCode)),
         DataGridCell<String>(
             columnName: 'Broker', value: getPartyName(purchase.brokerCode)),
-        // DataGridCell<double>(columnName: 'Rs /\$', value: purchase.addFixRs),
-        // DataGridCell<double>(columnName: 'Exchange', value: purchase.exchange),
-        DataGridCell<double>(columnName: 'Tot Wt', value: purchase.tWeight),
-        DataGridCell<double>(
-            columnName: 'Tot Amt Rs', value: purchase.totRsAmt),
-        // DataGridCell<double>(columnName: 'Tot Amt (\$)', value: purchase.totAmtDollar),
-        // DataGridCell<String>(columnName: 'Bill Type', value: purchase.bIllType),
-        // DataGridCell<double>(columnName: 'Lin Fix Rs', value: purchase.linFixRs),
-        // DataGridCell<double>(columnName: 'Tot Exp Fix Rs', value: purchase.totExpFixRs),
-        // DataGridCell<double>(columnName: 'Add Fix Rs', value: purchase.addFixRs),
-        // DataGridCell<double>(columnName: 'Less Fix Rs', value: purchase.lessFixRs),
-        // DataGridCell<double>(columnName: 'Final Net Amt Dollar', value: purchase.finalNetAmtDollar),
-        // DataGridCell<double>(columnName: 'Final Net Amt Rs', value: purchase.finalNetAmtRs),
+        DataGridCell<int>(columnName: 'Packet', value: packet),
+        DataGridCell<double>(columnName: 'Iss Wt', value: issWt),
+        DataGridCell<int>(columnName: 'Rec Pcs', value: recPcs),
+        DataGridCell<double>(columnName: 'Rec Wt', value: recWt),
+        DataGridCell<double>(columnName: 'Sale Wt', value: saleWt),
+        DataGridCell<double>(columnName: 'Out Wt', value: outWt),
+        DataGridCell<double>(columnName: 'Loss Wt', value: lossWt),
+        DataGridCell<double>(columnName: 'Total Wt', value: totalWt),
+        DataGridCell<double>(columnName: 'Tot Amt Rs', value: amtRs),
+        DataGridCell<double>(columnName: 'Tot Amt Dollar', value: amtDollar),
       ]);
     }).toList();
   }
 
   String formatDateWithTime(String date) {
-    // Parse the date string into a DateTime object
-    DateTime parsedDate = DateTime.parse(date);
-
-    // Format the DateTime object into the desired format
-    String formattedDate =
-        DateFormat('dd-MM-yyyy hh:mm:ss a').format(parsedDate);
-
-    return formattedDate;
+    try {
+      DateTime parsedDate = DateTime.parse(date);
+      return DateFormat('dd-MM-yyyy hh:mm:ss a').format(parsedDate);
+    } catch (_) {
+      return date;
+    }
   }
+
   @override
   Widget? buildTableSummaryCellWidget(
       GridTableSummaryRow summaryRow,
       GridSummaryColumn? summaryColumn,
       RowColumnIndex rowColumnIndex,
       String summaryValue) {
-    // Check if it's the first column to show "Total" label
-    bool isFirstColumn = rowColumnIndex.columnIndex == 0;
+    if (summaryColumn == null) {
+      if (rowColumnIndex.columnIndex == 0) {
+        return Container(
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(horizontal: 6.0),
+          child: Text(
+            summaryRow.title ?? 'Total',
+            style: TextStyle(
+              fontSize: 12,
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        );
+      }
+      return null;
+    }
+
+    String displayValue = summaryValue;
+    final doubleVal = double.tryParse(summaryValue);
+
+    if (doubleVal != null) {
+      if (summaryColumn.name == 'SumPacket' || summaryColumn.name == 'SumRecPcs') {
+        displayValue = doubleVal.toInt().toString();
+      } else if (summaryColumn.name == 'SumTotAmtRs') {
+        displayValue = '₹ ${doubleVal.toStringAsFixed(2)}';
+      } else if (summaryColumn.name == 'SumTotAmtDollar') {
+        displayValue = '\$ ${doubleVal.toStringAsFixed(2)}';
+      } else {
+        // Iss Wt, Rec Wt, Sale Wt, Out Wt, Loss Wt, Total Wt
+        displayValue = doubleVal.toStringAsFixed(3);
+      }
+    }
 
     return Container(
-      alignment: /*isFirstColumn ? Alignment.centerLeft : */
-      Alignment.centerLeft,
-      padding: const EdgeInsets.symmetric(horizontal: 5.0),
+      alignment: Alignment.centerRight,
+      padding: const EdgeInsets.symmetric(horizontal: 6.0),
       child: Text(
-        /*isFirstColumn ? 'Total' :*/
-        summaryValue,
-        // isFirstColumn ? summaryValue : double.parse(summaryValue).toStringAsFixed(2), // 'Total' in the first column
+        displayValue,
         style: TextStyle(
           fontSize: 12,
           color: AppColors.textPrimary,
@@ -87,19 +184,47 @@ class MemoReceiveDataGridSource extends DataGridSource {
 
   @override
   DataGridRowAdapter buildRow(DataGridRow row) {
-    // Alternate row colors based on the index of the row
     int rowIndex = rows.indexOf(row);
 
     return DataGridRowAdapter(
-      color: rowIndex % 2 == 0
-          ? AppColors.tableRowAlt
-          : AppColors.surface,
+      color: rowIndex % 2 == 0 ? AppColors.tableRowAlt : AppColors.surface,
       cells: row.getCells().map<Widget>((dataGridCell) {
+        final colName = dataGridCell.columnName;
+        final val = dataGridCell.value;
+
+        Alignment alignment = Alignment.centerLeft;
+        String text = '';
+
+        if (colName == 'ID' || colName == 'Date') {
+          alignment = Alignment.center;
+          text = val?.toString() ?? '';
+        } else if (colName == 'Party' || colName == 'Broker') {
+          alignment = Alignment.centerLeft;
+          text = val?.toString() ?? '';
+        } else if (colName == 'Packet' || colName == 'Rec Pcs') {
+          alignment = Alignment.centerRight;
+          final numVal = (val is num) ? val.toInt() : (int.tryParse(val?.toString() ?? '0') ?? 0);
+          text = '$numVal';
+        } else if (colName == 'Tot Amt Rs') {
+          alignment = Alignment.centerRight;
+          final numVal = (val is num) ? val.toDouble() : (double.tryParse(val?.toString() ?? '0') ?? 0.0);
+          text = '₹ ${numVal.toStringAsFixed(2)}';
+        } else if (colName == 'Tot Amt Dollar') {
+          alignment = Alignment.centerRight;
+          final numVal = (val is num) ? val.toDouble() : (double.tryParse(val?.toString() ?? '0') ?? 0.0);
+          text = '\$ ${numVal.toStringAsFixed(2)}';
+        } else {
+          // Iss Wt, Rec Wt, Sale Wt, Out Wt, Loss Wt, Total Wt
+          alignment = Alignment.centerRight;
+          final numVal = (val is num) ? val.toDouble() : (double.tryParse(val?.toString() ?? '0') ?? 0.0);
+          text = numVal.toStringAsFixed(3);
+        }
+
         return Container(
-          alignment: Alignment.centerLeft,
-          padding: const EdgeInsets.symmetric(horizontal: 5.0),
+          alignment: alignment,
+          padding: const EdgeInsets.symmetric(horizontal: 6.0),
           child: Text(
-            dataGridCell.value.toString(),
+            text,
             style: TextStyle(
               fontSize: 12,
               color: AppColors.textPrimary,

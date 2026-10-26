@@ -47,6 +47,13 @@ class MemoRecModel {
   String? pCID;
   int? ever;
   int? companyCode;
+  int? recPcs;
+  dynamic issWt;
+  dynamic recWt;
+  dynamic saleWt;
+  dynamic outWt;
+  dynamic lossWt;
+  dynamic totalWt;
 
   MemoRecModel(
       {this.memoRecMstID,
@@ -96,7 +103,14 @@ class MemoRecModel {
         this.logID,
         this.pCID,
         this.ever,
-        this.companyCode});
+        this.companyCode,
+        this.recPcs,
+        this.issWt,
+        this.recWt,
+        this.saleWt,
+        this.outWt,
+        this.lossWt,
+        this.totalWt});
 
   MemoRecModel.fromJson(Map<String, dynamic> json) {
     memoRecMstID = json['MemoRecMstID'];
@@ -147,6 +161,13 @@ class MemoRecModel {
     pCID = json['PCID'];
     ever = json['Ever'];
     companyCode = json['CompanyCode'];
+    recPcs = json['RecPcs'];
+    issWt = json['IssWt'];
+    recWt = json['RecWt'] ?? json['RecCarats'];
+    saleWt = json['SaleWt'] ?? json['SaleCarats'];
+    outWt = json['OutWt'] ?? json['OutCarats'];
+    lossWt = json['LossWt'] ?? json['LossCarats'];
+    totalWt = json['TotalWt'] ?? json['TotalCarats'];
   }
 
   Map<String, dynamic> toJson() {
@@ -199,6 +220,13 @@ class MemoRecModel {
     data['PCID'] = pCID;
     data['Ever'] = ever;
     data['CompanyCode'] = companyCode;
+    data['RecPcs'] = recPcs;
+    data['IssWt'] = issWt;
+    data['RecWt'] = recWt;
+    data['SaleWt'] = saleWt;
+    data['OutWt'] = outWt;
+    data['LossWt'] = lossWt;
+    data['TotalWt'] = totalWt;
     return data;
   }
 }

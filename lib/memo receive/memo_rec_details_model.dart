@@ -24,6 +24,7 @@ class MemoRecDetailsModel {
   dynamic penCarats;
   String? type;
   String? invNo;
+  int? roughPurMstID;
   int? roughTypeCode;
   String? description;
 
@@ -52,6 +53,7 @@ class MemoRecDetailsModel {
     this.penCarats,
     this.type,
     this.invNo,
+    this.roughPurMstID,
     this.roughTypeCode,
     this.description,
   });
@@ -81,6 +83,7 @@ class MemoRecDetailsModel {
     penCarats = json['PenCarats'];
     type = json['Type'];
     invNo = json['InvNo'];
+    roughPurMstID = json['RoughPurMstID'];
     roughTypeCode = json['RoughTypeCode'];
     description = json['Description'];
   }
@@ -111,6 +114,7 @@ class MemoRecDetailsModel {
     data['PenCarats'] = penCarats;
     data['Type'] = type;
     data['InvNo'] = invNo;
+    data['RoughPurMstID'] = roughPurMstID;
     data['RoughTypeCode'] = roughTypeCode;
     data['Description'] = description;
     return data;

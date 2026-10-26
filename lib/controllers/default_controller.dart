@@ -7221,7 +7221,7 @@ class DefaultController extends GetxController {
     }
   }
 
-  Future<void> addMemoRecData(
+  Future<bool> addMemoRecData(
       {String? partyCode,
       invoiceNo,
       invoiceDate,
@@ -7239,6 +7239,14 @@ class DefaultController extends GetxController {
       totalLossWt,
       totalRecWt,
       totalRecAmount,
+      int? totalPacket,
+      int? totalRecPcs,
+      double? totalIssWt,
+      double? totalSaleWt,
+      double? totalOutWt,
+      double? totalFinalWt,
+      double? totalRecAmountDollar,
+      double? totalRateDollar,
       memoIssueDetailId,
       int? fromUserId,
       bool printInvoice = false,
@@ -7267,10 +7275,10 @@ class DefaultController extends GetxController {
         // "CGstUsdAmount": 1.456,
         // "IGstUsdAmount": 1.456,
         "TotRsAmt": totalAmt, //total
-        "TotUsdAmt": totalAmt, // total
+        "TotUsdAmt": totalRecAmountDollar ?? totalAmt, // total
         // "RoundRs": 0,
         // "RoundUsd": 0,
-        "NetUsdAmount": totalAmt, //total
+        "NetUsdAmount": totalRecAmountDollar ?? totalAmt, //total
         // "RdType": "RS",
         // "DollarRate": 1,
         // "PaymentRec": "N",
@@ -7281,13 +7289,20 @@ class DefaultController extends GetxController {
         // "BankCode": 0,
         "PartyCode": partyCode,
         "FinalRsAmount": totalAmt, //total
-        "FinalUsdAmount": totalAmt, //total
-        // "TPcs": 0,
-        "TWeight": totalWt, //total rough wt
+        "FinalUsdAmount": totalRecAmountDollar ?? totalAmt, //total
+        "TPcs": totalPacket ?? 0,
+        "RecPcs": totalRecPcs ?? 0,
+        "TWeight": totalFinalWt ?? totalRecWt ?? totalWt, //total rough wt
+        "TotalWt": totalFinalWt,
+        "IssWt": totalIssWt ?? totalWt,
+        "RecWt": totalRecWt,
+        "SaleWt": totalSaleWt,
+        "OutWt": totalOutWt,
+        "LossWt": totalLossWt,
         "TRate": totalRate, // ang rate = total amt / total wt
         "TAmount": totalAmt, // total
-        "TDRate": totalRate, // rate = toal amt / total wt
-        "TDAmount": totalAmt, // dollar amt total
+        "TDRate": totalRateDollar ?? totalRate, // rate = toal amt / total wt
+        "TDAmount": totalRecAmountDollar ?? totalAmt, // dollar amt total
         "Sflag": "I",
         "SDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
         "LogID": fromUserId ?? currentUserId.value, // userid
@@ -7320,6 +7335,7 @@ class DefaultController extends GetxController {
               description: value['description'] ?? '',
               type: value['type'] ?? 'ROUGH',
               invNo: value['invNo'],
+              roughPurMstID: value['roughPurMstID'],
               clarityCode: value['clarityCode'] ?? value['clarity'],
               charniCode: value['charniCode'] ?? value['charni'],
               shapeCode: value['shapeCode'] ?? value['shape'],
@@ -7372,11 +7388,13 @@ class DefaultController extends GetxController {
         } else {
           successDialog(messageText: response.data['message']);
         }
+        return true;
       } else {
         isLoading.value = false;
 
         errorDialog(
             messageText: 'Failed to Add data: : ${response.data['message']}');
+        return false;
       }
     } catch (error) {
       isLoading.value = false;
@@ -7385,6 +7403,7 @@ class DefaultController extends GetxController {
       if (kDebugMode) {
         log('$error');
       }
+      return false;
     }
   }
 
@@ -8027,7 +8046,7 @@ class DefaultController extends GetxController {
     }
   }
 
-  Future<void> updateMemoRecData(
+  Future<bool> updateMemoRecData(
       {required int id,
       String? partyCode,
       invoiceNo,
@@ -8043,6 +8062,17 @@ class DefaultController extends GetxController {
       double? totalAmt,
       totalWt,
       totalRate,
+      totalLossWt,
+      totalRecWt,
+      totalRecAmount,
+      int? totalPacket,
+      int? totalRecPcs,
+      double? totalIssWt,
+      double? totalSaleWt,
+      double? totalOutWt,
+      double? totalFinalWt,
+      double? totalRecAmountDollar,
+      double? totalRateDollar,
       int? fromUserId,
       bool printInvoice = false,
       required List<Map<String, dynamic>> entries}) async {
@@ -8070,10 +8100,10 @@ class DefaultController extends GetxController {
         // "CGstUsdAmount": 1.456,
         // "IGstUsdAmount": 1.456,
         "TotRsAmt": totalAmt, //total
-        "TotUsdAmt": totalAmt, // total
+        "TotUsdAmt": totalRecAmountDollar ?? totalAmt, // total
         // "RoundRs": 0,
         // "RoundUsd": 0,
-        "NetUsdAmount": totalAmt, //total
+        "NetUsdAmount": totalRecAmountDollar ?? totalAmt, //total
         // "RdType": "RS",
         // "DollarRate": 1,
         // "PaymentRec": "N",
@@ -8084,13 +8114,20 @@ class DefaultController extends GetxController {
         // "BankCode": 0,
         "PartyCode": partyCode,
         "FinalRsAmount": totalAmt, //total
-        "FinalUsdAmount": totalAmt, //total
-        // "TPcs": 0,
-        "TWeight": totalWt, //total rough wt
+        "FinalUsdAmount": totalRecAmountDollar ?? totalAmt, //total
+        "TPcs": totalPacket ?? 0,
+        "RecPcs": totalRecPcs ?? 0,
+        "TWeight": totalFinalWt ?? totalRecWt ?? totalWt, //total rough wt
+        "TotalWt": totalFinalWt,
+        "IssWt": totalIssWt ?? totalWt,
+        "RecWt": totalRecWt,
+        "SaleWt": totalSaleWt,
+        "OutWt": totalOutWt,
+        "LossWt": totalLossWt,
         "TRate": totalRate, // ang rate = total amt / total wt
         "TAmount": totalAmt, // total
-        "TDRate": totalRate, // rate = toal amt / total wt
-        "TDAmount": totalAmt, // dollar amt total
+        "TDRate": totalRateDollar ?? totalRate, // rate = toal amt / total wt
+        "TDAmount": totalRecAmountDollar ?? totalAmt, // dollar amt total
         "Sflag": "U",
         "SDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
         "LogID": fromUserId ?? currentUserId.value, // userid
@@ -8110,6 +8147,7 @@ class DefaultController extends GetxController {
           if (value.containsKey('id') && value['id'] != null) {
             return _updateMemoRecRoughData(
                 id: value['id'],
+                memoIssueDetId: value['detId'],
                 wt: value['wt'],
                 recWt: value['recWt'],
                 saleWt: value['saleWt'],
@@ -8124,6 +8162,7 @@ class DefaultController extends GetxController {
                 description: value['description'] ?? '',
                 type: value['type'] ?? 'ROUGH',
                 invNo: value['invNo'],
+                roughPurMstID: value['roughPurMstID'],
                 clarityCode: value['clarityCode'] ?? value['clarity'],
                 charniCode: value['charniCode'] ?? value['charni'],
                 shapeCode: value['shapeCode'] ?? value['shape'],
@@ -8152,6 +8191,7 @@ class DefaultController extends GetxController {
                 description: value['description'] ?? '',
                 type: value['type'] ?? 'ROUGH',
                 invNo: value['invNo'],
+                roughPurMstID: value['roughPurMstID'],
                 clarityCode: value['clarityCode'] ?? value['clarity'],
                 charniCode: value['charniCode'] ?? value['charni'],
                 shapeCode: value['shapeCode'] ?? value['shape'],
@@ -8165,8 +8205,9 @@ class DefaultController extends GetxController {
                 );
           }
         }));
-        await getMemoRecData();
-        await getMemoRecDetailsData();
+        await getMemoRecData(force: true);
+        await getMemoRecDetailsData(force: true);
+        await getMemoIssueDetailsData(force: true);
         isLoading.value = false;
 
         if (printInvoice) {
@@ -8194,11 +8235,13 @@ class DefaultController extends GetxController {
         } else {
           successDialog(messageText: response.data['message']);
         }
+        return true;
       } else {
         isLoading.value = false;
 
         errorDialog(
-            messageText: 'Failed to Add data: : ${response.data['message']}');
+            messageText: 'Failed to Update data: ${response.data['message']}');
+        return false;
       }
     } catch (error) {
       isLoading.value = false;
@@ -8207,6 +8250,7 @@ class DefaultController extends GetxController {
       if (kDebugMode) {
         log('$error');
       }
+      return false;
     }
   }
 
@@ -8392,6 +8436,7 @@ class DefaultController extends GetxController {
       srNo,
       type,
       invNo,
+      roughPurMstID,
       clarityCode,
       charniCode,
       shapeCode,
@@ -8428,6 +8473,7 @@ class DefaultController extends GetxController {
         if (penCarats != null) "PenCarats": penCarats,
         "Type": type ?? "ROUGH",
         if (invNo != null && invNo.toString().isNotEmpty) "InvNo": invNo,
+        if (roughPurMstID != null) "RoughPurMstID": roughPurMstID is int ? roughPurMstID : (int.tryParse(roughPurMstID?.toString() ?? '') ?? roughPurMstID),
         "RoughTypeCode": int.tryParse(roughName?.toString() ?? '1') ?? 1,
         "Description": description
       };
@@ -8572,6 +8618,7 @@ class DefaultController extends GetxController {
 
   Future<void> _updateMemoRecRoughData(
       {required id,
+      memoIssueDetId,
       roughName,
       wt,
       recWt,
@@ -8587,6 +8634,7 @@ class DefaultController extends GetxController {
       srNo,
       type,
       invNo,
+      roughPurMstID,
       clarityCode,
       charniCode,
       shapeCode,
@@ -8601,6 +8649,7 @@ class DefaultController extends GetxController {
 
       var params = {
         if (memoRecMstID != null) "MemoRecMstID": memoRecMstID,
+        if (memoIssueDetId != null) "MemoIssueDetID": memoIssueDetId,
         "SrNo": srNo,
         if (clarityCode != null) "ClarityCode": clarityCode,
         if (charniCode != null) "CharniCode": charniCode,
@@ -8622,6 +8671,7 @@ class DefaultController extends GetxController {
         if (penCarats != null) "PenCarats": penCarats,
         "Type": type ?? "ROUGH",
         if (invNo != null && invNo.toString().isNotEmpty) "InvNo": invNo,
+        if (roughPurMstID != null) "RoughPurMstID": roughPurMstID is int ? roughPurMstID : (int.tryParse(roughPurMstID?.toString() ?? '') ?? roughPurMstID),
         "RoughTypeCode": int.tryParse(roughName?.toString() ?? '1') ?? 1,
         "Description": description
       };
@@ -9036,7 +9086,7 @@ class DefaultController extends GetxController {
     }
   }
 
-  Future<void> deleteMemoRecData(
+  Future<bool> deleteMemoRecData(
       {required int id, required List entries}) async {
     try {
       isDeleteLoading.value = true;
@@ -9068,10 +9118,12 @@ class DefaultController extends GetxController {
         isDeleteLoading.value = false;
 
         successDialog(messageText: response.data['message']);
+        return true;
       } else {
         isDeleteLoading.value = false;
         errorDialog(
             messageText: 'Failed to Delete Data: ${response.statusCode}');
+        return false;
       }
     } catch (error) {
       isDeleteLoading.value = false;
@@ -9079,6 +9131,7 @@ class DefaultController extends GetxController {
       if (kDebugMode) {
         log('$error');
       }
+      return false;
     }
   }
 
