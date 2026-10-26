@@ -49,11 +49,11 @@ class MemoIssueDetailsModel {
     memoIssueDetID = json['MemoIssueDetID'];
     memoIssueMstID = json['MemoIssueMstID'];
     srNo = json['SrNo'];
-    clarityCode = json['ClarityCode'] ?? json['clarityCode'];
-    charniCode = json['CharniCode'] ?? json['charniCode'];
-    shapeCode = json['ShapeCode'] ?? json['shapeCode'];
-    colorCode = json['ColorCode'] ?? json['colorCode'];
-    qualityCode = json['QualityCode'] ?? json['qualityCode'] ?? json['RoughQualityCode'];
+    clarityCode = _parseInt(json['ClarityCode'] ?? json['clarityCode']);
+    charniCode = _parseInt(json['CharniCode'] ?? json['charniCode']);
+    shapeCode = _parseInt(json['ShapeCode'] ?? json['shapeCode']);
+    colorCode = _parseInt(json['ColorCode'] ?? json['colorCode']);
+    qualityCode = _parseInt(json['QualityCode'] ?? json['qualityCode'] ?? json['RoughQualityCode']);
     pcs = json['Pcs'];
     carats = json['Carats'];
     rateRs = json['RateRs'];
@@ -67,6 +67,13 @@ class MemoIssueDetailsModel {
     roughTypeCode = json['RoughTypeCode'];
     description = json['Description'];
     rec = json['Rec'];
+  }
+
+  static int? _parseInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is String) return int.tryParse(value);
+    return null;
   }
 
   Map<String, dynamic> toJson() {

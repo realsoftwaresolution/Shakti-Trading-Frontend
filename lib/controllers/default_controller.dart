@@ -809,6 +809,7 @@ class DefaultController extends GetxController {
       }
     }
   }
+
   Future<void> getRoughAssortData({bool force = true}) async {
     if (!force && roughAssortMstList.isNotEmpty) return;
     try {
@@ -7164,11 +7165,11 @@ class DefaultController extends GetxController {
               type: value['type'] ?? 'ROUGH',
               invNo: value['invNo'],
               roughPurMstID: value['roughPurMstID'],
-              clarityCode: value['clarityCode'] ?? value['clarity'],
-              charniCode: value['charniCode'] ?? value['charni'],
-              shapeCode: value['shapeCode'] ?? value['shape'],
-              colorCode: value['colorCode'] ?? value['color'],
-              qualityCode: value['qualityCode'] ?? value['quality'],
+              clarityCode: value['clarityCode'] ?? 0,
+              charniCode: value['charniCode'] ?? 0,
+              shapeCode: value['shapeCode'] ?? 0,
+              colorCode: value['colorCode'] ?? 0,
+              qualityCode: value['qualityCode'] ?? 0,
               pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
               penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
               roughName: value['rough'] ?? '1',
@@ -7191,16 +7192,16 @@ class DefaultController extends GetxController {
             totalAmt: totalAmt!,
             totalRate: totalRate);
         isLoading.value = false;
-        await Printing.layoutPdf(
-          onLayout: (PdfPageFormat format) async => pdfData,
-        ).then((value) => successDialog(messageText: response.data['message']));
-        if (!kDebugMode) {
-          await Printing.sharePdf(
-            bytes: pdfData,
-            filename:
-                'Memo-Issue/${getPartyName(int.parse(partyCode!))}/${DateTime.now()}.pdf', // Set the custom name here
-          );
-        }
+        // await Printing.layoutPdf(
+//   onLayout: (PdfPageFormat format) async => pdfData,
+// ).then((value) => successDialog(messageText: response.data['message']));
+//         if (!kDebugMode) {
+//           await Printing.sharePdf(
+//             bytes: pdfData,
+//             filename:
+//                 'Memo-Issue/${getPartyName(int.parse(partyCode!))}/${DateTime.now()}.pdf', // Set the custom name here
+//           );
+//         }
         return true;
       } else {
         isLoading.value = false;
@@ -7946,11 +7947,11 @@ class DefaultController extends GetxController {
                 type: value['type'] ?? 'ROUGH',
                 invNo: value['invNo'],
                 roughPurMstID: value['roughPurMstID'],
-                clarityCode: value['clarityCode'] ?? value['clarity'],
-                charniCode: value['charniCode'] ?? value['charni'],
-                shapeCode: value['shapeCode'] ?? value['shape'],
-                colorCode: value['colorCode'] ?? value['color'],
-                qualityCode: value['qualityCode'] ?? value['quality'],
+                clarityCode: value['clarityCode'] ?? 0,
+                charniCode: value['charniCode'] ?? 0,
+                shapeCode: value['shapeCode'] ?? 0,
+                colorCode: value['colorCode'] ?? 0,
+                qualityCode: value['qualityCode'] ?? 0,
                 pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
                 penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
                 roughName: value['rough'] ?? '1',
@@ -7997,16 +7998,16 @@ class DefaultController extends GetxController {
             totalAmt: totalAmt!,
             totalRate: totalRate);
         isLoading.value = false;
-        await Printing.layoutPdf(
-          onLayout: (PdfPageFormat format) async => pdfData,
-        ).then((value) => successDialog(messageText: response.data['message']));
-        if (!kDebugMode) {
-          await Printing.sharePdf(
-            bytes: pdfData,
-            filename:
-                'Memo-Issue/${getPartyName(int.parse(partyCode!))}/${DateTime.now()}.pdf', // Set the custom name here
-          );
-        }
+        // await Printing.layoutPdf(
+        //   onLayout: (PdfPageFormat format) async => pdfData,
+        // ).then((value) => successDialog(messageText: response.data['message']));
+        // if (!kDebugMode) {
+        //   await Printing.sharePdf(
+        //     bytes: pdfData,
+        //     filename:
+        //         'Memo-Issue/${getPartyName(int.parse(partyCode!))}/${DateTime.now()}.pdf', // Set the custom name here
+        //   );
+        // }
         return true;
       } else {
         isLoading.value = false;

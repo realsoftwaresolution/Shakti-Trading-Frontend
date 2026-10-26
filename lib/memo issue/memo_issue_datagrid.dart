@@ -22,7 +22,7 @@ class MemoIssueDataGridSource extends DataGridSource {
         //     columnName: 'Invoice No', value: purchase.invoiceNo),
         DataGridCell<String>(
             columnName: 'Invoice Date',
-            value: formatDateWithTime(purchase.invoiceDate!)),
+            value: formatDateWithTime(purchase.sDate!)),
         // DataGridCell<String>(
         //     columnName: 'Rec Date', value: purchase.recdate),
         DataGridCell<String>(
