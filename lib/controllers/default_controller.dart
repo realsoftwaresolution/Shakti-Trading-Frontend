@@ -1063,6 +1063,30 @@ class DefaultController extends GetxController {
           return item;
         }).toList();
 
+        final List<PolishPurchaseDetailModel> allExtractedDetails = [];
+        for (var raw in list) {
+          if (raw is Map) {
+            final rawDetails = raw['details'] ?? raw['PolishPurchaseDetails'] ?? raw['polishPurchaseDetails'];
+            final mstId = int.tryParse((raw['PolishPurMstID'] ?? raw['polishPurMstID'] ?? raw['id'])?.toString() ?? '');
+            if (rawDetails is List && rawDetails.isNotEmpty) {
+              for (var e in rawDetails) {
+                if (e is Map) {
+                  final d = PolishPurchaseDetailModel.fromJson(Map<String, dynamic>.from(e));
+                  if (mstId != null && d.polishPurMstID == null) {
+                    d.polishPurMstID = mstId;
+                  }
+                  _resolvePolishDetailNames(d);
+                  allExtractedDetails.add(d);
+                }
+              }
+            }
+          }
+        }
+        if (allExtractedDetails.isNotEmpty) {
+          polishPurchaseDetailList.assignAll(allExtractedDetails);
+          polishPurchaseDetailList.refresh();
+        }
+
         if (parsedList.isNotEmpty) {
           polishPurchaseList.assignAll(parsedList);
         } else {
@@ -1077,6 +1101,21 @@ class DefaultController extends GetxController {
       if (polishPurchaseList.isEmpty) {
         polishPurchaseList.refresh();
       }
+    }
+  }
+
+  Future<void> ensurePolishPurchaseDetailsLoaded() async {
+    if (polishPurchaseList.isEmpty) {
+      await getPolishPurchaseData(force: false);
+    }
+    final missingIds = polishPurchaseList
+        .where((p) =>
+            p.polishPurMstID != null &&
+            !polishPurchaseDetailList.any((d) => d.polishPurMstID == p.polishPurMstID))
+        .map((p) => p.polishPurMstID!)
+        .toList();
+    if (missingIds.isNotEmpty) {
+      await Future.wait(missingIds.map((id) => getPolishPurchaseById(id)));
     }
   }
 
@@ -7058,7 +7097,7 @@ class DefaultController extends GetxController {
     }
   }
 
-  Future<void> addMemoIssueData(
+  Future<bool> addMemoIssueData(
       {String? partyCode,
       invoiceNo,
       invoiceDate,
@@ -7073,47 +7112,28 @@ class DefaultController extends GetxController {
       double? totalAmt,
       totalWt,
       totalRate,
-      required List<Map<String, String>> entries}) async {
+      int? fromUserId,
+      String? rdType,
+      double? dollarRate,
+      required List entries}) async {
     try {
       isLoading.value = true;
       final dio = ApiService.to.dio;
 
       var params = {
-        // "PolishDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(invoiceDate),
-        // "InvoiceNo": "$invoiceNo",
-        // "InvNo": 123,
+        if (invoiceNo != null) "InvoiceNo": "$invoiceNo",
         "InvoiceDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(invoiceDate),
-        // "DueDay": dueDays,
-        // "DueDate": dueDate,
-        // "InvCode": "1",
-        // "SaleType": "LOCAL",
-        // "InsuranceName": "RELIANCE",
-        // "SGstPer": 12.453,
-        // "CGstPer": 12.453,
-        // "IGstPer": 12.453,
-        // "SGstAmount": 14.23,
-        // "CGstAmount": 12.23,
-        // "IGstAmount": 12.32,
-        // "SGstUsdAmount": 1.456,
-        // "CGstUsdAmount": 1.456,
-        // "IGstUsdAmount": 1.456,
+        if (dueDays != null) "DueDay": dueDays,
+        if (dueDate != null) "DueDate": dueDate,
         "TotRsAmt": totalAmt, //total
         "TotUsdAmt": totalAmt, // total
-        // "RoundRs": 0,
-        // "RoundUsd": 0,
         "NetUsdAmount": totalAmt, //total
-        // "RdType": "RS",
-        // "DollarRate": 1,
-        // "PaymentRec": "N",
-        // "BroPer": 0,
-        // "BroRsAmount": 0,
-        // "BroUSDAmount": 0,
+        "RdType": rdType ?? "RS",
+        "DollarRate": dollarRate ?? 100,
         "BrokerCode": brokerCode,
-        // "BankCode": 0,
         "PartyCode": partyCode,
         "FinalRsAmount": totalAmt, //total
         "FinalUsdAmount": totalAmt, //total
-        // "TPcs": 0,
         "TWeight": totalWt, //total rough wt
         "TRate": totalRate, // ang rate = total amt / total wt
         "TAmount": totalAmt, // total
@@ -7121,7 +7141,7 @@ class DefaultController extends GetxController {
         "TDAmount": totalAmt, // dollar amt total
         "Sflag": "I",
         "SDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
-        "LogID": 0, // userid
+        "LogID": fromUserId ?? currentUserId.value, // userid
         "PCID": "TESTWEB", // deviceId
         "Ever": 0, // 0
         "CompanyCode": companyCode.value // Global var Company Code
@@ -7137,27 +7157,35 @@ class DefaultController extends GetxController {
           // current entry data
           return _addMemoIssueRoughData(
               wt: value['wt'],
-              rate: value['rate'],
-              amount: value['amount'],
-              roughName: value['rough'],
+              rate: value['rateRs'] ?? value['rate'],
+              amount: value['amountRs'] ?? value['amount'],
+              rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
+              amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
+              type: value['type'] ?? 'ROUGH',
+              invNo: value['invNo'],
+              roughPurMstID: value['roughPurMstID'],
+              clarityCode: value['clarityCode'] ?? value['clarity'],
+              charniCode: value['charniCode'] ?? value['charni'],
+              shapeCode: value['shapeCode'] ?? value['shape'],
+              colorCode: value['colorCode'] ?? value['color'],
+              qualityCode: value['qualityCode'] ?? value['quality'],
+              pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
+              penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
+              roughName: value['rough'] ?? '1',
               description: value['description'],
               memoIssueMstID: response.data['data']['MemoIssueMstID'],
               srNo: index + 1,
               rec: 'N' // incremented srNo
               );
         }));
-        await getMemoIssueData();
-        await getMemoIssueDetailsData();
+        await getMemoIssueData(force: true);
+        await getMemoIssueDetailsData(force: true);
         isLoading.value = true;
         final invoiceGenerator = MemoIssueInvoiceGenerator();
         final pdfData = await invoiceGenerator.generateInvoice(
             id: response.data['data']['MemoIssueMstID'],
             invoiceDate: invoiceDate,
-            // invoiceNo: response.data['data']['InvoiceNo'],
             partyCode: partyCode.toString(),
-            // brokerCode: brokerCode,
-            // dueDate: onlyDueDate,
-            // dueDays: dueDays,
             entries: entries,
             totalWt: totalWt,
             totalAmt: totalAmt!,
@@ -7173,16 +7201,22 @@ class DefaultController extends GetxController {
                 'Memo-Issue/${getPartyName(int.parse(partyCode!))}/${DateTime.now()}.pdf', // Set the custom name here
           );
         }
+        return true;
       } else {
         isLoading.value = false;
-        errorDialog(messageText: response.data['message']);
+
+        errorDialog(
+            messageText: 'Failed to Add data: : ${response.data['message']}');
+        return false;
       }
     } catch (error) {
       isLoading.value = false;
+
       errorDialog(messageText: 'An unexpected error occurred.');
       if (kDebugMode) {
         log('$error');
       }
+      return false;
     }
   }
 
@@ -7205,7 +7239,9 @@ class DefaultController extends GetxController {
       totalRecWt,
       totalRecAmount,
       memoIssueDetailId,
-      required List<Map<String, String>> entries}) async {
+      int? fromUserId,
+      bool printInvoice = false,
+      required List<Map<String, dynamic>> entries}) async {
     try {
       isLoading.value = true;
       final dio = ApiService.to.dio;
@@ -7253,7 +7289,7 @@ class DefaultController extends GetxController {
         "TDAmount": totalAmt, // dollar amt total
         "Sflag": "I",
         "SDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
-        "LogID": 0, // userid
+        "LogID": fromUserId ?? currentUserId.value, // userid
         "PCID": "TESTWEB", // deviceId
         "Ever": 0, // 0
         "CompanyCode": companyCode.value // Global var Company Code
@@ -7271,11 +7307,26 @@ class DefaultController extends GetxController {
               memoIssueDetId: value['detId'],
               wt: value['wt'],
               recWt: value['recWt'],
+              saleWt: value['saleWt'],
+              outWt: value['outWt'],
               lossWt: value['lossWt'],
-              rate: value['rate'],
-              amount: value['amount'],
-              roughName: value['rough'],
-              description: value['description'],
+              totalWt: value['totalWt'],
+              rate: value['rateRs'] ?? value['rate'],
+              amount: value['amountRs'] ?? value['amount'],
+              rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
+              amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
+              roughName: value['rough'] ?? '1',
+              description: value['description'] ?? '',
+              type: value['type'] ?? 'ROUGH',
+              invNo: value['invNo'],
+              clarityCode: value['clarityCode'] ?? value['clarity'],
+              charniCode: value['charniCode'] ?? value['charni'],
+              shapeCode: value['shapeCode'] ?? value['shape'],
+              colorCode: value['colorCode'] ?? value['color'],
+              qualityCode: value['qualityCode'] ?? value['quality'],
+              pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
+              recPcs: int.tryParse(value['recPcs']?.toString() ?? '0'),
+              penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
               memoRecMstID: response.data['data']['MemoRecMstID'],
               srNo: index + 1 // incremented srNo
               );
@@ -7287,36 +7338,38 @@ class DefaultController extends GetxController {
             rec: 'Y',
           );
         }));
-        await getMemoRecData();
-        await getMemoRecDetailsData();
-        await getMemoIssueDetailsData();
-        isLoading.value = true;
-        final invoiceGenerator = MemoRecInvoiceGenerator();
-        final pdfData = await invoiceGenerator.generateInvoice(
-            id: response.data['data']['MemoRecMstID'],
-            invoiceDate: invoiceDate,
-            // invoiceNo: response.data['data']['InvoiceNo'],
-            partyCode: partyCode.toString(),
-            // brokerCode: brokerCode,
-            // dueDate: onlyDueDate,
-            // dueDays: dueDays,
-            entries: entries,
-            totalWt: totalWt,
-            totalLossWt: totalLossWt,
-            totalRecWt: totalRecWt,
-            totalAmt: totalAmt!,
-            totalRecAmt: totalRecAmount,
-            totalRate: totalRate);
+        await getMemoRecData(force: true);
+        await getMemoRecDetailsData(force: true);
+        await getMemoIssueDetailsData(force: true);
         isLoading.value = false;
-        await Printing.layoutPdf(
-          onLayout: (PdfPageFormat format) async => pdfData,
-        ).then((value) => successDialog(messageText: response.data['message']));
-        if (!kDebugMode) {
-          await Printing.sharePdf(
-            bytes: pdfData,
-            filename:
-                'Memo-Receive/${getPartyName(int.parse(partyCode!))}/${DateTime.now()}.pdf', // Set the custom name here
-          );
+
+        if (printInvoice) {
+          isLoading.value = true;
+          final invoiceGenerator = MemoRecInvoiceGenerator();
+          final pdfData = await invoiceGenerator.generateInvoice(
+              id: response.data['data']['MemoRecMstID'],
+              invoiceDate: invoiceDate,
+              partyCode: partyCode.toString(),
+              entries: entries.map((e) => e.map((k, v) => MapEntry(k, v?.toString() ?? ''))).toList(),
+              totalWt: totalWt,
+              totalLossWt: totalLossWt,
+              totalRecWt: totalRecWt,
+              totalAmt: totalAmt!,
+              totalRecAmt: totalRecAmount,
+              totalRate: totalRate);
+          isLoading.value = false;
+          await Printing.layoutPdf(
+            onLayout: (PdfPageFormat format) async => pdfData,
+          ).then((value) => successDialog(messageText: response.data['message']));
+          if (!kDebugMode) {
+            await Printing.sharePdf(
+              bytes: pdfData,
+              filename:
+                  'Memo-Receive/${getPartyName(int.parse(partyCode!))}/${DateTime.now()}.pdf',
+            );
+          }
+        } else {
+          successDialog(messageText: response.data['message']);
         }
       } else {
         isLoading.value = false;
@@ -7823,7 +7876,7 @@ class DefaultController extends GetxController {
     }
   }
 
-  Future<void> updateMemoIssueData(
+  Future<bool> updateMemoIssueData(
       {required int id,
       String? partyCode,
       invoiceNo,
@@ -7839,47 +7892,28 @@ class DefaultController extends GetxController {
       double? totalAmt,
       totalWt,
       totalRate,
-      required List<Map<String, String>> entries}) async {
+      int? fromUserId,
+      String? rdType,
+      double? dollarRate,
+      required List entries}) async {
     try {
       isLoading.value = true;
       final dio = ApiService.to.dio;
 
       var params = {
-        // "PolishDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(invoiceDate),
-        // "InvoiceNo": "$invoiceNo",
-        // "InvNo": 123,
+        if (invoiceNo != null) "InvoiceNo": "$invoiceNo",
         "InvoiceDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(invoiceDate),
-        // "DueDay": dueDays,
-        // "DueDate": dueDate,
-        // "InvCode": "1",
-        // "SaleType": "LOCAL",
-        // "InsuranceName": "RELIANCE",
-        // "SGstPer": 12.453,
-        // "CGstPer": 12.453,
-        // "IGstPer": 12.453,
-        // "SGstAmount": 14.23,
-        // "CGstAmount": 12.23,
-        // "IGstAmount": 12.32,
-        // "SGstUsdAmount": 1.456,
-        // "CGstUsdAmount": 1.456,
-        // "IGstUsdAmount": 1.456,
+        if (dueDays != null) "DueDay": dueDays,
+        if (dueDate != null) "DueDate": dueDate,
         "TotRsAmt": totalAmt, //total
         "TotUsdAmt": totalAmt, // total
-        // "RoundRs": 0,
-        // "RoundUsd": 0,
         "NetUsdAmount": totalAmt, //total
-        // "RdType": "RS",
-        // "DollarRate": 1,
-        // "PaymentRec": "N",
-        // "BroPer": 0,
-        // "BroRsAmount": 0,
-        // "BroUSDAmount": 0,
+        "RdType": rdType ?? "RS",
+        "DollarRate": dollarRate ?? 100,
         "BrokerCode": brokerCode,
-        // "BankCode": 0,
         "PartyCode": partyCode,
         "FinalRsAmount": totalAmt, //total
         "FinalUsdAmount": totalAmt, //total
-        // "TPcs": 0,
         "TWeight": totalWt, //total rough wt
         "TRate": totalRate, // ang rate = total amt / total wt
         "TAmount": totalAmt, // total
@@ -7887,7 +7921,7 @@ class DefaultController extends GetxController {
         "TDAmount": totalAmt, // dollar amt total
         "Sflag": "U",
         "SDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
-        "LogID": 0, // userid
+        "LogID": fromUserId ?? currentUserId.value, // userid
         "PCID": "TESTWEB", // deviceId
         "Ever": 0, // 0
         "CompanyCode": companyCode.value // Global var Company Code
@@ -7901,13 +7935,25 @@ class DefaultController extends GetxController {
           int index = entry.key; // index of the current entry
           var value = entry.value;
           // current entry data
-          if (value.containsKey('id') && value['id'] != null) {
+          if (value.containsKey('id') && value['id'] != null && value['id'].toString().isNotEmpty) {
             return _updateMemoIssueRoughData(
                 id: value['id'],
                 wt: value['wt'],
-                rate: value['rate'],
-                amount: value['amount'],
-                roughName: value['rough'],
+                rate: value['rateRs'] ?? value['rate'],
+                amount: value['amountRs'] ?? value['amount'],
+                rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
+                amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
+                type: value['type'] ?? 'ROUGH',
+                invNo: value['invNo'],
+                roughPurMstID: value['roughPurMstID'],
+                clarityCode: value['clarityCode'] ?? value['clarity'],
+                charniCode: value['charniCode'] ?? value['charni'],
+                shapeCode: value['shapeCode'] ?? value['shape'],
+                colorCode: value['colorCode'] ?? value['color'],
+                qualityCode: value['qualityCode'] ?? value['quality'],
+                pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
+                penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
+                roughName: value['rough'] ?? '1',
                 description: value['description'],
                 memoIssueMstID: response.data['data']['MemoIssueMstID'],
                 srNo: index + 1,
@@ -7916,28 +7962,36 @@ class DefaultController extends GetxController {
           } else {
             return _addMemoIssueRoughData(
                 wt: value['wt'],
-                rate: value['rate'],
-                amount: value['amount'],
+                rate: value['rateRs'] ?? value['rate'],
+                amount: value['amountRs'] ?? value['amount'],
+                rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
+                amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
+                type: value['type'] ?? 'ROUGH',
+                invNo: value['invNo'],
+                roughPurMstID: value['roughPurMstID'],
+                clarityCode: value['clarityCode'] ?? value['clarity'],
+                charniCode: value['charniCode'] ?? value['charni'],
+                shapeCode: value['shapeCode'] ?? value['shape'],
+                colorCode: value['colorCode'] ?? value['color'],
+                qualityCode: value['qualityCode'] ?? value['quality'],
+                pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
+                penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
                 description: value['description'],
-                roughName: value['rough'],
+                roughName: value['rough'] ?? '1',
                 memoIssueMstID: response.data['data']['MemoIssueMstID'],
                 srNo: index + 1,
                 rec: 'N' // incremented srNo
                 );
           }
         }));
-        await getMemoIssueData();
-        await getMemoIssueDetailsData();
+        await getMemoIssueData(force: true);
+        await getMemoIssueDetailsData(force: true);
         isLoading.value = true;
         final invoiceGenerator = MemoIssueInvoiceGenerator();
         final pdfData = await invoiceGenerator.generateInvoice(
             id: response.data['data']['MemoIssueMstID'],
             invoiceDate: invoiceDate,
-            // invoiceNo: response.data['data']['InvoiceNo'],
             partyCode: partyCode.toString(),
-            // brokerCode: brokerCode,
-            // dueDate: onlyDueDate,
-            // dueDays: dueDays,
             entries: entries,
             totalWt: totalWt,
             totalAmt: totalAmt!,
@@ -7953,11 +8007,13 @@ class DefaultController extends GetxController {
                 'Memo-Issue/${getPartyName(int.parse(partyCode!))}/${DateTime.now()}.pdf', // Set the custom name here
           );
         }
+        return true;
       } else {
         isLoading.value = false;
 
         errorDialog(
-            messageText: 'Failed to Add data: : ${response.data['message']}');
+            messageText: 'Failed to Update data: : ${response.data['message']}');
+        return false;
       }
     } catch (error) {
       isLoading.value = false;
@@ -7966,6 +8022,7 @@ class DefaultController extends GetxController {
       if (kDebugMode) {
         log('$error');
       }
+      return false;
     }
   }
 
@@ -7985,7 +8042,9 @@ class DefaultController extends GetxController {
       double? totalAmt,
       totalWt,
       totalRate,
-      required List<Map<String, String>> entries}) async {
+      int? fromUserId,
+      bool printInvoice = false,
+      required List<Map<String, dynamic>> entries}) async {
     try {
       isLoading.value = true;
       final dio = ApiService.to.dio;
@@ -8033,7 +8092,7 @@ class DefaultController extends GetxController {
         "TDAmount": totalAmt, // dollar amt total
         "Sflag": "U",
         "SDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
-        "LogID": 0, // userid
+        "LogID": fromUserId ?? currentUserId.value, // userid
         "PCID": "TESTWEB", // deviceId
         "Ever": 0, // 0
         "CompanyCode": companyCode.value // Global var Company Code
@@ -8052,20 +8111,54 @@ class DefaultController extends GetxController {
                 id: value['id'],
                 wt: value['wt'],
                 recWt: value['recWt'],
-                rate: value['rate'],
-                amount: value['amount'],
-                roughName: value['rough'],
-                description: value['description'],
+                saleWt: value['saleWt'],
+                outWt: value['outWt'],
+                lossWt: value['lossWt'],
+                totalWt: value['totalWt'],
+                rate: value['rateRs'] ?? value['rate'],
+                amount: value['amountRs'] ?? value['amount'],
+                rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
+                amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
+                roughName: value['rough'] ?? '1',
+                description: value['description'] ?? '',
+                type: value['type'] ?? 'ROUGH',
+                invNo: value['invNo'],
+                clarityCode: value['clarityCode'] ?? value['clarity'],
+                charniCode: value['charniCode'] ?? value['charni'],
+                shapeCode: value['shapeCode'] ?? value['shape'],
+                colorCode: value['colorCode'] ?? value['color'],
+                qualityCode: value['qualityCode'] ?? value['quality'],
+                pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
+                recPcs: int.tryParse(value['recPcs']?.toString() ?? '0'),
+                penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
                 memoRecMstID: response.data['data']['MemoRecMstID'],
                 srNo: index + 1 // incremented srNo
                 );
           } else {
             return _addMemoRecRoughData(
+                memoIssueDetId: value['detId'],
                 wt: value['wt'],
-                rate: value['rate'],
-                amount: value['amount'],
-                description: value['description'],
-                roughName: value['rough'],
+                recWt: value['recWt'],
+                saleWt: value['saleWt'],
+                outWt: value['outWt'],
+                lossWt: value['lossWt'],
+                totalWt: value['totalWt'],
+                rate: value['rateRs'] ?? value['rate'],
+                amount: value['amountRs'] ?? value['amount'],
+                rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
+                amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
+                roughName: value['rough'] ?? '1',
+                description: value['description'] ?? '',
+                type: value['type'] ?? 'ROUGH',
+                invNo: value['invNo'],
+                clarityCode: value['clarityCode'] ?? value['clarity'],
+                charniCode: value['charniCode'] ?? value['charni'],
+                shapeCode: value['shapeCode'] ?? value['shape'],
+                colorCode: value['colorCode'] ?? value['color'],
+                qualityCode: value['qualityCode'] ?? value['quality'],
+                pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
+                recPcs: int.tryParse(value['recPcs']?.toString() ?? '0'),
+                penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
                 memoRecMstID: response.data['data']['MemoRecMstID'],
                 srNo: index + 1 // incremented srNo
                 );
@@ -8073,30 +8166,32 @@ class DefaultController extends GetxController {
         }));
         await getMemoRecData();
         await getMemoRecDetailsData();
-        isLoading.value = true;
-        final invoiceGenerator = MemoRecInvoiceGenerator();
-        final pdfData = await invoiceGenerator.generateInvoice(
-            id: response.data['data']['MemoRecMstID'],
-            invoiceDate: invoiceDate,
-            // invoiceNo: response.data['data']['InvoiceNo'],
-            partyCode: partyCode.toString(),
-            // brokerCode: brokerCode,
-            // dueDate: onlyDueDate,
-            // dueDays: dueDays,
-            entries: entries,
-            totalWt: totalWt,
-            totalAmt: totalAmt!,
-            totalRate: totalRate);
         isLoading.value = false;
-        await Printing.layoutPdf(
-          onLayout: (PdfPageFormat format) async => pdfData,
-        ).then((value) => successDialog(messageText: response.data['message']));
-        if (!kDebugMode) {
-          await Printing.sharePdf(
-            bytes: pdfData,
-            filename:
-                'Memo-Receive/${getPartyName(int.parse(partyCode!))}/${DateTime.now()}.pdf', // Set the custom name here
-          );
+
+        if (printInvoice) {
+          isLoading.value = true;
+          final invoiceGenerator = MemoRecInvoiceGenerator();
+          final pdfData = await invoiceGenerator.generateInvoice(
+              id: response.data['data']['MemoRecMstID'],
+              invoiceDate: invoiceDate,
+              partyCode: partyCode.toString(),
+              entries: entries.map((e) => e.map((k, v) => MapEntry(k, v?.toString() ?? ''))).toList(),
+              totalWt: totalWt,
+              totalAmt: totalAmt!,
+              totalRate: totalRate);
+          isLoading.value = false;
+          await Printing.layoutPdf(
+            onLayout: (PdfPageFormat format) async => pdfData,
+          ).then((value) => successDialog(messageText: response.data['message']));
+          if (!kDebugMode) {
+            await Printing.sharePdf(
+              bytes: pdfData,
+              filename:
+                  'Memo-Receive/${getPartyName(int.parse(partyCode!))}/${DateTime.now()}.pdf',
+            );
+          }
+        } else {
+          successDialog(messageText: response.data['message']);
         }
       } else {
         isLoading.value = false;
@@ -8217,6 +8312,18 @@ class DefaultController extends GetxController {
       wt,
       rate,
       amount,
+      rateD,
+      amountD,
+      type,
+      invNo,
+      roughPurMstID,
+      clarityCode,
+      charniCode,
+      shapeCode,
+      colorCode,
+      qualityCode,
+      pcs,
+      penCarats,
       description,
       srNo,
       memoIssueMstID,
@@ -8227,21 +8334,24 @@ class DefaultController extends GetxController {
       var params = {
         "MemoIssueMstID": memoIssueMstID,
         "SrNo": srNo,
-        // "ClarityCode": 1,
-        // "CharniCode": 1,
-        // "Pcs": 1,
+        if (clarityCode != null) "ClarityCode": clarityCode,
+        if (charniCode != null) "CharniCode": charniCode,
+        if (shapeCode != null) "ShapeCode": shapeCode,
+        if (colorCode != null) "ColorCode": colorCode,
+        if (qualityCode != null) "QualityCode": qualityCode,
+        if (pcs != null) "Pcs": pcs,
         "Carats": wt,
         "RateRs": rate,
         "AmountRs": amount,
-        "RateD": rate,
-        "AmountD": amount,
-        // "PenCarats": 12.232,
-        "Type": "ROUGH",
-        // "InvNo": "",
-        // "RoughPurMstID": 2,
-        "RoughTypeCode": int.parse(roughName),
-        "Description": description,
-        "Rec": rec
+        "RateD": rateD ?? rate,
+        "AmountD": amountD ?? amount,
+        if (penCarats != null) "PenCarats": penCarats,
+        "Type": type ?? "ROUGH",
+        if (invNo != null && invNo.toString().isNotEmpty) "InvNo": invNo,
+        if (roughPurMstID != null) "RoughPurMstID": roughPurMstID is int ? roughPurMstID : (int.tryParse(roughPurMstID?.toString() ?? '') ?? roughPurMstID),
+        "RoughTypeCode": int.tryParse(roughName?.toString() ?? '') ?? 1,
+        // "Description": description,
+        "Rec": rec ?? 'N'
       };
 
       final response = await dio.post(
@@ -8269,11 +8379,26 @@ class DefaultController extends GetxController {
       roughName,
       wt,
       recWt,
+      saleWt,
+      outWt,
       lossWt,
+      totalWt,
       rate,
       amount,
+      rateD,
+      amountD,
       description,
       srNo,
+      type,
+      invNo,
+      clarityCode,
+      charniCode,
+      shapeCode,
+      colorCode,
+      qualityCode,
+      pcs,
+      recPcs,
+      penCarats,
       memoRecMstID}) async {
     try {
       final dio = ApiService.to.dio;
@@ -8282,21 +8407,27 @@ class DefaultController extends GetxController {
         "MemoRecMstID": memoRecMstID,
         "MemoIssueDetID": memoIssueDetId,
         "SrNo": srNo,
-        // "ClarityCode": 1,
-        // "CharniCode": 1,
-        // "Pcs": 1,
+        if (clarityCode != null) "ClarityCode": clarityCode,
+        if (charniCode != null) "CharniCode": charniCode,
+        if (shapeCode != null) "ShapeCode": shapeCode,
+        if (colorCode != null) "ColorCode": colorCode,
+        if (qualityCode != null) "QualityCode": qualityCode,
+        if (pcs != null) "Pcs": pcs,
+        if (recPcs != null) "RecPcs": recPcs,
         "RecCarats": recWt,
+        if (saleWt != null) "SaleCarats": saleWt,
+        if (outWt != null) "OutCarats": outWt,
         "LossCarats": lossWt,
+        if (totalWt != null) "TotalCarats": totalWt,
         "Carats": wt,
         "RateRs": rate,
         "AmountRs": amount,
-        "RateD": rate,
-        "AmountD": amount,
-        // "PenCarats": 12.232,
-        "Type": "ROUGH",
-        // "InvNo": "",
-        // "RoughPurMstID": 2,
-        "RoughTypeCode": int.parse(roughName),
+        "RateD": rateD ?? rate,
+        "AmountD": amountD ?? amount,
+        if (penCarats != null) "PenCarats": penCarats,
+        "Type": type ?? "ROUGH",
+        if (invNo != null && invNo.toString().isNotEmpty) "InvNo": invNo,
+        "RoughTypeCode": int.tryParse(roughName?.toString() ?? '1') ?? 1,
         "Description": description
       };
 
@@ -8377,6 +8508,18 @@ class DefaultController extends GetxController {
       description,
       rate,
       amount,
+      rateD,
+      amountD,
+      type,
+      invNo,
+      roughPurMstID,
+      clarityCode,
+      charniCode,
+      shapeCode,
+      colorCode,
+      qualityCode,
+      pcs,
+      penCarats,
       srNo,
       rec,
       memoIssueMstID}) async {
@@ -8386,21 +8529,24 @@ class DefaultController extends GetxController {
       var params = {
         if (memoIssueMstID != null) "MemoIssueMstID": memoIssueMstID,
         if (srNo != null) "SrNo": srNo,
-        // "ClarityCode": 1,
-        // "CharniCode": 1,
-        // "Pcs": 1,
+        if (clarityCode != null) "ClarityCode": clarityCode,
+        if (charniCode != null) "CharniCode": charniCode,
+        if (shapeCode != null) "ShapeCode": shapeCode,
+        if (colorCode != null) "ColorCode": colorCode,
+        if (qualityCode != null) "QualityCode": qualityCode,
+        if (pcs != null) "Pcs": pcs,
         if (wt != null) "Carats": wt,
         if (rate != null) "RateRs": rate,
         if (amount != null) "AmountRs": amount,
-        if (rate != null) "RateD": rate,
-        if (amount != null) "AmountD": amount,
-        // "PenCarats": 12.232,
-        "Type": "ROUGH",
-        // "InvNo": "",
-        // "RoughPurMstID": 2,
-        if (roughName != null) "RoughTypeCode": int.parse(roughName),
-        if (description != null) "Description": description,
-        "Rec": rec
+        if (rateD != null || rate != null) "RateD": rateD ?? rate,
+        if (amountD != null || amount != null) "AmountD": amountD ?? amount,
+        if (penCarats != null) "PenCarats": penCarats,
+        if (type != null) "Type": type,
+        if (invNo != null && invNo.toString().isNotEmpty) "InvNo": invNo,
+        if (roughPurMstID != null) "RoughPurMstID": roughPurMstID is int ? roughPurMstID : (int.tryParse(roughPurMstID?.toString() ?? '') ?? roughPurMstID),
+        if (roughName != null) "RoughTypeCode": int.tryParse(roughName?.toString() ?? '') ?? 1,
+        // if (description != null) "Description": description,
+        "Rec": rec ?? 'N'
       };
 
       final response = await dio.put(
@@ -8428,31 +8574,54 @@ class DefaultController extends GetxController {
       roughName,
       wt,
       recWt,
+      saleWt,
+      outWt,
+      lossWt,
+      totalWt,
       description,
       rate,
       amount,
+      rateD,
+      amountD,
       srNo,
+      type,
+      invNo,
+      clarityCode,
+      charniCode,
+      shapeCode,
+      colorCode,
+      qualityCode,
+      pcs,
+      recPcs,
+      penCarats,
       memoRecMstID}) async {
     try {
       final dio = ApiService.to.dio;
 
       var params = {
-        "MemoRecMstID": memoRecMstID,
+        if (memoRecMstID != null) "MemoRecMstID": memoRecMstID,
         "SrNo": srNo,
-        // "ClarityCode": 1,
-        // "CharniCode": 1,
-        // "Pcs": 1,
+        if (clarityCode != null) "ClarityCode": clarityCode,
+        if (charniCode != null) "CharniCode": charniCode,
+        if (shapeCode != null) "ShapeCode": shapeCode,
+        if (colorCode != null) "ColorCode": colorCode,
+        if (qualityCode != null) "QualityCode": qualityCode,
+        if (pcs != null) "Pcs": pcs,
+        if (recPcs != null) "RecPcs": recPcs,
         "Carats": wt,
         "RecCarats": recWt,
+        if (saleWt != null) "SaleCarats": saleWt,
+        if (outWt != null) "OutCarats": outWt,
+        if (lossWt != null) "LossCarats": lossWt,
+        if (totalWt != null) "TotalCarats": totalWt,
         "RateRs": rate,
         "AmountRs": amount,
-        "RateD": rate,
-        "AmountD": amount,
-        // "PenCarats": 12.232,
-        "Type": "ROUGH",
-        // "InvNo": "",
-        // "RoughPurMstID": 2,
-        "RoughTypeCode": int.parse(roughName),
+        "RateD": rateD ?? rate,
+        "AmountD": amountD ?? amount,
+        if (penCarats != null) "PenCarats": penCarats,
+        "Type": type ?? "ROUGH",
+        if (invNo != null && invNo.toString().isNotEmpty) "InvNo": invNo,
+        "RoughTypeCode": int.tryParse(roughName?.toString() ?? '1') ?? 1,
         "Description": description
       };
 
@@ -8605,7 +8774,7 @@ class DefaultController extends GetxController {
         if (kDebugMode) {
           print('Deleted!');
         }
-        await getMemoIssueDetailsData();
+        await getMemoIssueDetailsData(force: true);
         isDeleteLoading.value = false;
       } else {
         isDeleteLoading.value = false;
@@ -8637,8 +8806,8 @@ class DefaultController extends GetxController {
         if (kDebugMode) {
           print('Deleted!');
         }
-        await getMemoRecDetailsData();
-        await getMemoIssueDetailsData();
+        await getMemoRecDetailsData(force: true);
+        await getMemoIssueDetailsData(force: true);
         isDeleteLoading.value = false;
       } else {
         isDeleteLoading.value = false;
@@ -8819,7 +8988,7 @@ class DefaultController extends GetxController {
     }
   }
 
-  Future<void> deleteMemoIssueData(
+  Future<bool> deleteMemoIssueData(
       {required int id, required List entries}) async {
     try {
       isDeleteLoading.value = true;
@@ -8844,15 +9013,17 @@ class DefaultController extends GetxController {
         }
 
         // After processing deletion, refresh data and stop loading
-        await getMemoIssueDetailsData();
-        await getMemoIssueData();
+        await getMemoIssueDetailsData(force: true);
+        await getMemoIssueData(force: true);
         isDeleteLoading.value = false;
 
         successDialog(messageText: response.data['message']);
+        return true;
       } else {
         isDeleteLoading.value = false;
         errorDialog(
             messageText: 'Failed to Delete Data: ${response.statusCode}');
+        return false;
       }
     } catch (error) {
       isDeleteLoading.value = false;
@@ -8860,6 +9031,7 @@ class DefaultController extends GetxController {
       if (kDebugMode) {
         log('$error');
       }
+      return false;
     }
   }
 
@@ -8889,9 +9061,9 @@ class DefaultController extends GetxController {
         }
 
         // After processing deletion, refresh data and stop loading
-        await getMemoRecDetailsData();
-        await getMemoIssueDetailsData();
-        await getMemoRecData();
+        await getMemoRecDetailsData(force: true);
+        await getMemoIssueDetailsData(force: true);
+        await getMemoRecData(force: true);
         isDeleteLoading.value = false;
 
         successDialog(messageText: response.data['message']);

@@ -275,7 +275,7 @@ class _LoginDialogState extends State<LoginDialog> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Abhinandan',
+                          'Shakti',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 26,
@@ -290,7 +290,7 @@ class _LoginDialogState extends State<LoginDialog> {
                           ),
                         ),
                         Text(
-                          'D I A M O N D',
+                          'T R A D I N G',
                           style: TextStyle(
                             color: Color(0xFF67E8F9), // Glowing Cyan
                             fontSize: 12,
@@ -578,7 +578,7 @@ class _LoginDialogState extends State<LoginDialog> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Abhinandan',
+                            'Shakti',
                             style: TextStyle(
                               color: Color(0xFF0F172A),
                               fontSize: 19,
@@ -587,7 +587,7 @@ class _LoginDialogState extends State<LoginDialog> {
                             ),
                           ),
                           Text(
-                            'D I A M O N D',
+                            'T R A D I N G',
                             style: TextStyle(
                               color: Color(0xFF1D4ED8),
                               fontSize: 10.5,

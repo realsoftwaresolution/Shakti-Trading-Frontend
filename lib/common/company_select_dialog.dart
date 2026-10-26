@@ -300,7 +300,7 @@ class _CompanySelectionDialogState extends State<CompanySelectionDialog> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Abhinandan',
+                          'Shakti',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 26,
@@ -315,7 +315,7 @@ class _CompanySelectionDialogState extends State<CompanySelectionDialog> {
                           ),
                         ),
                         Text(
-                          'D I A M O N D',
+                          'T R A D I N G',
                           style: TextStyle(
                             color: Color(0xFF67E8F9), // Glowing Cyan
                             fontSize: 12,

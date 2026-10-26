@@ -769,7 +769,7 @@ class _AppSidebarState extends State<AppSidebar> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Abhinandan',
+                  'Shakti',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 16,
@@ -779,7 +779,7 @@ class _AppSidebarState extends State<AppSidebar> {
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  'D I A M O N D',
+                  'T R A D I N G',
                   style: TextStyle(
                     color: Color(0xFF38BDF8),
                     fontSize: 9.5,

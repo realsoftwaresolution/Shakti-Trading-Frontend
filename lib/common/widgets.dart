@@ -317,10 +317,13 @@ Widget buildBottomButton(
 }
 
 String getRoughName(String? typeCode) {
+  if (typeCode == null || typeCode.trim().isEmpty) return '';
+  final parsed = int.tryParse(typeCode.trim());
+  if (parsed == null) return typeCode;
   final party = defaultController.roughModel.firstWhere(
-      (p) => p.roughTypeCode == int.parse(typeCode!),
-      orElse: () => RoughModel(roughTypeName: 'Unknown'));
-  return party.roughTypeName ?? 'Unknown';
+      (p) => p.roughTypeCode == parsed,
+      orElse: () => RoughModel(roughTypeName: typeCode));
+  return party.roughTypeName ?? typeCode;
 }
 
 String getPartyName(int? partyCode) {
