@@ -445,7 +445,12 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
   }
 
   List<DropdownMenuItem<String>> get dropdownItemsEntry {
-    return pendingEntries.map((d) {
+    final brokerCode = _selectedTypeBroker.value;
+    return pendingEntries.where((d) {
+      final parentMemo = defaultController.memoIssueList.firstWhereOrNull(
+          (m) => m.memoIssueMstID == d.memoIssueMstID);
+      return parentMemo != null && (parentMemo.brokerCode?.toString() ?? '') == brokerCode;
+    }).map((d) {
       final parentMemo = defaultController.memoIssueList.firstWhereOrNull(
           (m) => m.memoIssueMstID == d.memoIssueMstID);
       final memoNo = (parentMemo?.invoiceNo != null && parentMemo!.invoiceNo!.isNotEmpty)
@@ -464,18 +469,147 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
     }).toList();
   }
 
+  // ---------- Entry dropdown: table-style rows showing all item data ----------
+  // (flex, right-aligned) per column. Header and rows use the same spec so the
+  // columns line up.
+  static const List<(String, int, bool)> _entryColumns = [
+    ('Memo No', 6, false),
+    ('Date', 4, false),
+    ('Party', 5, false),
+    ('Type', 3, false),
+    ('Inv No', 3, false),
+    ('Rough / Shape', 4, false),
+    ('Quality', 3, false),
+    ('Charni', 3, false),
+    ('Clarity', 3, false),
+    ('Color', 3, false),
+    ('Pcs', 2, true),
+    ('Wt (Cts)', 3, true),
+    ('Rate \u20B9', 3, true),
+    ('Amount \u20B9', 4, true),
+    ('Rate \$', 3, true),
+    ('Amount \$', 3, true),
+    ('Pen Wt', 3, true),
+  ];
+
+  static const double _entryPopupWidth = 1400;
+
+  num _toNum(dynamic v) => num.tryParse(v?.toString() ?? '') ?? 0;
+
+  String _codeName(dynamic code, String Function(dynamic) lookup) {
+    if (code == null || code.toString().isEmpty || code.toString() == '0') return '-';
+    return lookup(code);
+  }
+
+  Widget _entryTableRow(List<String> cells, {bool isHeader = false}) {
+    return Row(
+      children: List.generate(_entryColumns.length, (i) {
+        final col = _entryColumns[i];
+        return Expanded(
+          flex: col.$2,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Text(
+              i < cells.length ? cells[i] : '',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: col.$3 ? TextAlign.right : TextAlign.left,
+              style: TextStyle(
+                fontSize: isHeader ? 11 : 12,
+                fontWeight: isHeader ? FontWeight.bold : FontWeight.w500,
+                color: isHeader ? AppColors.textSecondary : AppColors.textPrimary,
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget get _entryPopupHeader => Container(
+        height: 30,
+        // 10px matches the dropdown row padding so columns align
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: AppColors.background,
+          border: Border(bottom: BorderSide(color: AppColors.borderLight, width: 1)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: _entryTableRow(
+                _entryColumns.map((c) => c.$1).toList(),
+                isHeader: true,
+              ),
+            ),
+            // space for the selected check icon shown on rows
+            const SizedBox(width: 16),
+          ],
+        ),
+      );
+
   List<AppDropdownItem<String>> get appDropdownItemsEntry {
-    return pendingEntries.map((d) {
+    final brokerCode = _selectedTypeBroker.value;
+    return pendingEntries.where((d) {
+      final parentMemo = defaultController.memoIssueList.firstWhereOrNull(
+          (m) => m.memoIssueMstID == d.memoIssueMstID);
+      return parentMemo != null && (parentMemo.brokerCode?.toString() ?? '') == brokerCode;
+    }).map((d) {
       final parentMemo = defaultController.memoIssueList.firstWhereOrNull(
           (m) => m.memoIssueMstID == d.memoIssueMstID);
       final memoNo = (parentMemo?.invoiceNo != null && parentMemo!.invoiceNo!.isNotEmpty)
           ? parentMemo.invoiceNo!
           : '${d.memoIssueMstID}';
       final partyName = getPartyName(parentMemo?.partyCode);
+      final DateTime? memoDate = DateTime.tryParse(parentMemo?.invoiceDate ?? '');
+      final String dateText = memoDate != null ? DateFormat('dd-MM-yyyy').format(memoDate) : '-';
+      final String type = d.type ?? 'ROUGH';
+      final bool isRough = type.toUpperCase() == 'ROUGH';
+      final String roughOrShape = isRough
+          ? (getRoughName(d.roughTypeCode?.toString()).isEmpty
+              ? '-'
+              : getRoughName(d.roughTypeCode?.toString()))
+          : _codeName(d.shapeCode, getShapeName);
+      final String quality = _codeName(d.qualityCode, getQualityName);
+      final String charni = _codeName(d.charniCode, getCharniName);
+      final String clarity = _codeName(d.clarityCode, getClarityName);
+      final String color = _codeName(d.colorCode, getColorName);
+      final num carats = _toNum(d.carats);
+      final num rateRs = _toNum(d.rateRs);
+      final num amtRs = d.amountRs != null ? _toNum(d.amountRs) : carats * rateRs;
+      final num rateD = _toNum(d.rateD);
+      final num amtD = d.amountD != null ? _toNum(d.amountD) : carats * rateD;
+      final num penWt = _toNum(d.penCarats);
+
+      final cells = <String>[
+        memoNo,
+        dateText,
+        partyName,
+        type,
+        (d.invNo == null || d.invNo!.isEmpty) ? '-' : d.invNo!,
+        roughOrShape,
+        quality,
+        charni,
+        clarity,
+        color,
+        '${d.pcs ?? 1}',
+        carats.toStringAsFixed(3),
+        rateRs.toStringAsFixed(2),
+        amtRs.toStringAsFixed(2),
+        rateD.toStringAsFixed(2),
+        amtD.toStringAsFixed(2),
+        penWt.toStringAsFixed(3),
+      ];
+
       return AppDropdownItem<String>(
         value: d.memoIssueDetID.toString(),
-        label: 'Memo #$memoNo | ${d.type ?? 'ROUGH'} | Wt: ${d.carats ?? 0} Cts | ₹${d.rateRs ?? d.rateD ?? 0}',
+        // Shown in the field after selection; also used for search,
+        // so it contains every column value.
+        label: 'Memo #$memoNo | $type | Wt: ${carats.toStringAsFixed(3)} Cts | '
+            '\u20B9${rateRs.toStringAsFixed(2)} | Party: $partyName | Inv: ${cells[4]} | '
+            '$dateText | $roughOrShape | $quality | $charni | $clarity | $color | Pcs: ${d.pcs ?? 1}',
         subtitle: 'Pcs: ${d.pcs ?? 1} | Inv: ${d.invNo ?? '-'} | Party: $partyName',
+        child: _entryTableRow(cells),
       );
     }).toList();
   }
@@ -1271,8 +1405,12 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
                     focusNode: _entryFocus,
                     nextFocusNode: _recPcsFocus,
                     hintText: 'Select Entry',
-                    searchHint: 'Search memo items...',
+                    searchHint: 'Search memo no, party, invoice, quality, weight...',
                     isEnabled: _isEnabled,
+                    popupWidth: _entryPopupWidth,
+                    popupHeader: _entryPopupHeader,
+                    itemHeight: 34,
+                    maxHeight: 460,
                     prefixIcon: const Icon(Icons.assignment_outlined, size: 15),
                     onChanged: (val) {
                       if (val != null) {
@@ -2376,7 +2514,7 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
                             ),
                             GridColumn(
                               columnName: 'Packet',
-                              width: 80,
+                              width: 90,
                               label: Container(
                                 alignment: Alignment.centerRight,
                                 padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -2394,7 +2532,7 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
                             ),
                             GridColumn(
                               columnName: 'Rec Pcs',
-                              width: 80,
+                              width: 100,
                               label: Container(
                                 alignment: Alignment.centerRight,
                                 padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -2412,7 +2550,7 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
                             ),
                             GridColumn(
                               columnName: 'Sale Wt',
-                              width: 90,
+                              width: 100,
                               label: Container(
                                 alignment: Alignment.centerRight,
                                 padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -2430,7 +2568,7 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
                             ),
                             GridColumn(
                               columnName: 'Loss Wt',
-                              width: 90,
+                              width: 100,
                               label: Container(
                                 alignment: Alignment.centerRight,
                                 padding: const EdgeInsets.symmetric(horizontal: 6),

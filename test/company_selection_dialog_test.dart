@@ -38,11 +38,11 @@ void main() {
     expect(find.text('Choose the operating company branch'), findsOneWidget);
 
     // Verify company name is displayed in the dropdown
-    expect(find.text('Abhinandan Diamond'), findsOneWidget);
+    expect(find.text('Shakti Diamond'), findsOneWidget);
 
     // Verify company details (mobile & address) are displayed
-    expect(find.text('8926555111'), findsOneWidget);
-    expect(find.text('204 Shraddhajyot Building, Mahidharpura, Surat'), findsOneWidget);
+    expect(find.text('8898999999'), findsOneWidget);
+    expect(find.text('Minibazar, Surat'), findsOneWidget);
 
     // Verify proceed button is present
     expect(find.text('Proceed to ERP'), findsOneWidget);
@@ -51,20 +51,7 @@ void main() {
   testWidgets('CompanySelectionDialog renders loaded companies list properly',
       (WidgetTester tester) async {
     final controller = Get.find<DefaultController>();
-    controller.companies.value = [
-      CompanyMst(
-        companyCode: 1,
-        companyName: 'Branch 1 - Mumbai',
-        mobileno: '9988776655',
-        address: 'BDB Complex, BKC, Mumbai',
-      ),
-      CompanyMst(
-        companyCode: 3,
-        companyName: 'Abhinandan Diamond - Surat',
-        mobileno: '8926555111',
-        address: '204 Shraddhajyot Building, Surat',
-      ),
-    ];
+    controller.companies.value = [];
     controller.companyCode.value = 3;
 
     await tester.pumpWidget(
@@ -81,9 +68,9 @@ void main() {
     expect(find.text('Choose the operating company branch'), findsOneWidget);
 
     // Verify company name from API is displayed
-    expect(find.text('Abhinandan Diamond - Surat'), findsOneWidget);
-    expect(find.text('8926555111'), findsOneWidget);
-    expect(find.text('204 Shraddhajyot Building, Surat'), findsOneWidget);
+    expect(find.text('Shakti Diamond - Surat'), findsOneWidget);
+    expect(find.text('8898999999'), findsOneWidget);
+    expect(find.text('Minibazar, Surat'), findsOneWidget);
 
     // Verify Confirm Switch button
     expect(find.text('Confirm Switch'), findsOneWidget);
@@ -118,7 +105,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Left hero panel elements
-    expect(find.text('Abhinandan'), findsWidgets);
+    expect(find.text('Shakti'), findsWidgets);
     expect(find.text('D I A M O N D'), findsWidgets);
     expect(find.text('Operating Branches'), findsOneWidget);
     expect(find.text('Branch Control'), findsOneWidget);

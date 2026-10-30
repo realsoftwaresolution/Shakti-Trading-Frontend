@@ -392,20 +392,18 @@ class DashboardWithDynamicTabs extends StatelessWidget {
             return Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (!Responsive.isDesktop(context)) ...[
-                  const SizedBox(width: 10),
-                  Obx(
-                    () => Text(
-                      '•  ${getCompanyName(defaultController.companyCode.value)}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      overflow: TextOverflow.ellipsis,
+                const SizedBox(width: 10),
+                Obx(
+                      () => Text(
+                    '•  ${getCompanyName(defaultController.companyCode.value)}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.bold,
                     ),
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ],
+                ),
               ],
             );
           }),

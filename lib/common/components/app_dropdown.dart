@@ -56,6 +56,14 @@ class AppDropdown<T> extends StatefulWidget {
   final Widget Function(BuildContext context, T value)? selectedItemBuilder;
   final double? itemHeight;
 
+  /// Optional width of the popup list. When larger than the field, the popup
+  /// grows to this width (limited to the screen) - useful for table-like rows.
+  final double? popupWidth;
+
+  /// Optional fixed widget shown between the search bar and the item list,
+  /// e.g. a column header row for table-like items.
+  final Widget? popupHeader;
+
   const AppDropdown({
     super.key,
     this.label,
@@ -79,6 +87,8 @@ class AppDropdown<T> extends StatefulWidget {
     this.contentPadding,
     this.selectedItemBuilder,
     this.itemHeight,
+    this.popupWidth,
+    this.popupHeader,
   });
 
   @override
@@ -315,7 +325,12 @@ class _AppDropdownState<T> extends State<AppDropdown<T>> {
     final showAbove = spaceBelow < 200 && spaceAbove > spaceBelow;
 
     final double popupHeight = (showAbove ? spaceAbove - 24 : spaceBelow - 24).clamp(160.0, widget.maxHeight);
-    final double popupWidth = size.width < 220.0 ? 220.0 : size.width;
+    double popupWidth = size.width < 220.0 ? 220.0 : size.width;
+    if (widget.popupWidth != null && widget.popupWidth! > popupWidth) {
+      popupWidth = widget.popupWidth!;
+    }
+    final double maxPopupWidth = screenSize.width - 24;
+    if (popupWidth > maxPopupWidth) popupWidth = maxPopupWidth;
 
     double left = offset.dx;
     if (left + popupWidth > screenSize.width - 12) {
@@ -520,6 +535,9 @@ class _AppDropdownState<T> extends State<AppDropdown<T>> {
             ),
           ),
 
+        // Optional fixed header (e.g. column titles)
+        if (widget.popupHeader != null) widget.popupHeader!,
+
         // 2. Scrollable Item List
         Expanded(
           child: _filteredItems.isEmpty
@@ -599,7 +617,16 @@ class _AppDropdownState<T> extends State<AppDropdown<T>> {
                                 ),
                               ),
                             ],
-                            if (!widget.isMultiSelect && isSelected)
+                            if (!widget.isMultiSelect && widget.popupHeader != null)
+                              // Table-style list: always reserve the check-mark space so
+                              // every row's columns line up with the header.
+                              SizedBox(
+                                width: 16,
+                                child: isSelected
+                                    ? Icon(Icons.check_rounded, size: 16, color: AppColors.primary)
+                                    : null,
+                              )
+                            else if (!widget.isMultiSelect && isSelected)
                               Icon(Icons.check_rounded, size: 16, color: AppColors.primary),
                             if (item.trailing != null) item.trailing!,
                           ],

@@ -40,7 +40,7 @@ import 'package:real_web_rough_entry_system/user/user_form_screen.dart';
 import 'package:real_web_rough_entry_system/tab-view-dashboard/tab_controller.dart';
 import 'package:real_web_rough_entry_system/tab-view-dashboard/tab_item.dart';
 
-/// Ultra-clean, modern left sidebar for Abhinandan Diamond ERP.
+/// Ultra-clean, modern left sidebar for Shakti Diamond ERP.
 /// Supports dynamic menu API structure, collapsible accordion groups,
 /// single-line submenus, smooth hover states, collapsed rail popups, and logout/exit actions.
 class AppSidebar extends StatefulWidget {

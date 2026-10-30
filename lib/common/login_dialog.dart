@@ -248,7 +248,7 @@ class _LoginDialogState extends State<LoginDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.max,
               children: [
-                // Top Brand Mark: Diamond Logo + Abhinandan DIAMOND
+                // Top Brand Mark: Diamond Logo + Shakti DIAMOND
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
@@ -565,7 +565,7 @@ class _LoginDialogState extends State<LoginDialog> {
             ),
             const SizedBox(height: 14),
 
-            // 3. Abhinandan Diamond Logo Badge
+            // 3. Shakti Diamond Logo Badge
             Center(
               child: Column(
                 children: [

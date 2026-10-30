@@ -235,7 +235,7 @@ class PolishPurchaseModel {
       'PCID': pcId ?? '551776',
       'Ever': ever ?? 22,
       'SDate': sDate ?? DateTime.now().toIso8601String().split('T').first,
-      'CompanyCode': companyCode ?? 1,
+      'CompanyCode': companyCode,
       'AvgRate': rateRs ?? 0,
       'Remarks': remarks ?? '',
       'Type': (type != null && type!.isNotEmpty) ? type! : 'LOOSE',

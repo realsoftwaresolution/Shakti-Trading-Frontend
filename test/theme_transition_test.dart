@@ -63,15 +63,7 @@ void main() {
     Get.put(TabControllerX());
     final defaultController = Get.put(DefaultController());
     defaultController.companyCode.value = 3;
-    defaultController.companies.value = [
-      CompanyMst(
-        companyCode: 3,
-        companyName: 'Abhinandan Diamond',
-        branchName: 'Surat',
-        mobileno: '9876543210',
-        address: 'Katargam, Surat',
-      ),
-    ];
+    defaultController.companies.value = [];
   });
 
   testWidgets('Theme toggling does not dispose or recreate open tabs in IndexedStack',

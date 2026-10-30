@@ -69,9 +69,7 @@ class ProfileCard extends StatelessWidget {
             if (!Responsive.isMobile(context))
               Obx(
                 () => Text(
-                  defaultController.companyCode.value == 0
-                      ? 'Abhinandan Diamond'
-                      : getCompanyName(defaultController.companyCode.value),
+                  getCompanyName(defaultController.companyCode.value),
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,

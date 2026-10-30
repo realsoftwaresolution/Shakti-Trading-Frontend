@@ -19,6 +19,10 @@ class CompanyMstModel {
   String? bankAcNo;
   String? insurance;
   String? invCode; // FinalAmt
+  String? memoInvoicePrefix; // Memo Issue No prefix e.g. 'ML/'
+  String? memoInvoiceSuffix; // Memo Issue No suffix e.g. '/AK2000'
+  String? invoicePrefix; // Polish Sale Invoice No prefix
+  String? invoiceSuffix; // Polish Sale Invoice No suffix
   String? fromDate; // FromYear / FromDate
   String? toDate; // ToYear / ToDate
   dynamic sortID;
@@ -49,6 +53,10 @@ class CompanyMstModel {
     this.bankAcNo,
     this.insurance,
     this.invCode,
+    this.memoInvoicePrefix,
+    this.memoInvoiceSuffix,
+    this.invoicePrefix,
+    this.invoiceSuffix,
     this.fromDate,
     this.toDate,
     this.sortID,
@@ -137,6 +145,14 @@ class CompanyMstModel {
           json['FinalAmt']?.toString() ??
           json['invCode']?.toString() ??
           json['finalAmt']?.toString(),
+      memoInvoicePrefix: json['MemoInvoicePrefix']?.toString() ??
+          json['memoInvoicePrefix']?.toString(),
+      memoInvoiceSuffix: json['MemoInvoiceSuffix']?.toString() ??
+          json['memoInvoiceSuffix']?.toString(),
+      invoicePrefix: json['InvoicePrefix']?.toString() ??
+          json['invoicePrefix']?.toString(),
+      invoiceSuffix: json['InvoiceSuffix']?.toString() ??
+          json['invoiceSuffix']?.toString(),
       fromDate: json['FromDate']?.toString() ??
           json['FromYear']?.toString() ??
           json['fromDate']?.toString() ??
@@ -176,6 +192,10 @@ class CompanyMstModel {
       'AccNo': bankAcNo,
       'Insurance': insurance,
       'FinalAmt': invCode,
+      'MemoInvoicePrefix': memoInvoicePrefix,
+      'MemoInvoiceSuffix': memoInvoiceSuffix,
+      'InvoicePrefix': invoicePrefix,
+      'InvoiceSuffix': invoiceSuffix,
       'FromDate': fromDate,
       'ToDate': toDate,
       'SortID': sortID,

@@ -158,7 +158,12 @@ class DefaultController extends GetxController {
   RxMap groupedData = {}.obs;
   RxBool isLoading = false.obs;
   RxBool isDeleteLoading = false.obs;
-  RxInt companyCode = 3.obs;
+  // Selected company - set ONLY from the Company Selection dialog after login
+  // (restored from SharedPreferences on refresh). 0 = no company selected yet.
+  RxInt companyCode = 0.obs;
+  // User's own company from the login response - only used to pre-select it
+  // in the Company Selection dialog. Never used as the working company.
+  RxInt loginCompanyCode = 0.obs;
   RxString companyPartyCode = '21'.obs;
   RxString deviceInfo = 'No IP Found'.obs;
   RxBool enabledAdvancedDashboard = true.obs;
@@ -466,14 +471,11 @@ class DefaultController extends GetxController {
       await prefs.remove('ua');
     }
 
-    // 10. Auto-assign Company Code if returned in login payload
-    if (data['CompanyCode'] != null) {
-      final int? compCode = int.tryParse(data['CompanyCode'].toString());
-      if (compCode != null && compCode > 0) {
-        companyCode.value = compCode;
-        await prefs.setInt('companyCode', compCode);
-      }
-    }
+    // 10. User's company from the login payload is only a suggestion for the
+    // Company Selection dialog. The working company is set when the user
+    // picks one there (companyCode), never automatically here.
+    loginCompanyCode.value =
+        int.tryParse(data['CompanyCode']?.toString() ?? '') ?? 0;
 
     await prefs.setBool('isLoggedIn', true);
   }
@@ -567,6 +569,8 @@ class DefaultController extends GetxController {
     userLoginTimeTo.value = '';
     userAccessMap.clear();
     menuList.clear();
+    companyCode.value = 0;
+    loginCompanyCode.value = 0;
 
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.clear();
@@ -713,19 +717,7 @@ class DefaultController extends GetxController {
       }
     } finally {
       if (companies.isEmpty) {
-        companies.value = [
-          CompanyMst(
-            companyMstID: 1013,
-            companyCode: 3,
-            companyName: 'Abhinandan Diamond',
-            address: '204 Shraddhajyot Building, Mahidharpura, Surat',
-            mobileno: '8926555111',
-            emailID: 'contact@abhinandandiamond.com',
-            fromYear: '2024-10-25',
-            toYear: '2025-12-30',
-            active: true,
-          ),
-        ];
+        companies.value = [];
       }
       isLoadingCompanies.value = false;
     }
@@ -1069,6 +1061,9 @@ class DefaultController extends GetxController {
           if (raw is Map) {
             final rawDetails = raw['details'] ?? raw['PolishPurchaseDetails'] ?? raw['polishPurchaseDetails'];
             final mstId = int.tryParse((raw['PolishPurMstID'] ?? raw['polishPurMstID'] ?? raw['id'])?.toString() ?? '');
+            // The list API now sends each purchase's details (even an empty
+            // list), so this purchase does not need its own GET /:id call.
+            if (rawDetails is List && mstId != null) _polishDetailsLoadedIds.add(mstId);
             if (rawDetails is List && rawDetails.isNotEmpty) {
               for (var e in rawDetails) {
                 if (e is Map) {
@@ -1105,14 +1100,20 @@ class DefaultController extends GetxController {
     }
   }
 
+  /// Polish purchases whose details are already loaded (from the list API or
+  /// GET /:id) - so they are not requested again one by one.
+  final Set<int> _polishDetailsLoadedIds = <int>{};
+
   Future<void> ensurePolishPurchaseDetailsLoaded() async {
     if (polishPurchaseList.isEmpty) {
       await getPolishPurchaseData(force: false);
     }
+    final loadedFromDetails = polishPurchaseDetailList.map((d) => d.polishPurMstID).toSet();
     final missingIds = polishPurchaseList
         .where((p) =>
             p.polishPurMstID != null &&
-            !polishPurchaseDetailList.any((d) => d.polishPurMstID == p.polishPurMstID))
+            !_polishDetailsLoadedIds.contains(p.polishPurMstID) &&
+            !loadedFromDetails.contains(p.polishPurMstID))
         .map((p) => p.polishPurMstID!)
         .toList();
     if (missingIds.isNotEmpty) {
@@ -1143,6 +1144,7 @@ class DefaultController extends GetxController {
           }
 
           // Cache details locally for this master
+          _polishDetailsLoadedIds.add(id);
           polishPurchaseDetailList.removeWhere((d) => d.polishPurMstID == id);
           polishPurchaseDetailList.addAll(details);
           polishPurchaseDetailList.refresh();
@@ -1183,7 +1185,7 @@ class DefaultController extends GetxController {
   }) async {
     isLoading.value = true;
     try {
-      header.companyCode = companyCode.value != 0 ? companyCode.value : (header.companyCode ?? 1);
+      header.companyCode = companyCode.value != 0 ? companyCode.value : header.companyCode;
       final masterPayload = header.toApiMasterJson();
       final detailsPayload = details.map((d) => d.toApiDetailJson(isUpdate: false)).toList();
       final body = {
@@ -1323,7 +1325,7 @@ class DefaultController extends GetxController {
     isLoading.value = true;
     try {
       final int id = header.polishPurMstID ?? 0;
-      header.companyCode = companyCode.value != 0 ? companyCode.value : (header.companyCode ?? 1);
+      header.companyCode = companyCode.value != 0 ? companyCode.value : header.companyCode;
       final masterPayload = header.toApiMasterJson();
       final detailsPayload = details.map((d) => d.toApiDetailJson(isUpdate: true)).toList();
       final body = {
@@ -1784,7 +1786,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final int codeToUse =
-        companyCodeParam ?? (companyCode.value != 0 ? companyCode.value : 3);
+        companyCodeParam ?? companyCode.value;
     await _masterService.create(
       endpoint: 'rough-entry/rough-type/add',
       payload: {
@@ -1807,7 +1809,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final int codeToUse =
-        companyCodeParam ?? (companyCode.value != 0 ? companyCode.value : 3);
+        companyCodeParam ?? companyCode.value;
     await _masterService.update(
       endpoint: 'rough-entry/rough-type',
       id: id,
@@ -1864,7 +1866,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.create(
       endpoint: 'rough-entry/quality/add',
       payload: {
@@ -1887,7 +1889,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.update(
       endpoint: 'rough-entry/quality',
       id: id,
@@ -1964,7 +1966,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 3);
+        companyCode.value;
     await _masterService.create(
       endpoint: 'rough-entry/charni/add',
       payload: {
@@ -1994,7 +1996,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 3);
+        companyCode.value;
     await _masterService.update(
       endpoint: 'rough-entry/charni/$id',
       payload: {
@@ -2065,7 +2067,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 3);
+        companyCode.value;
     await _masterService.create(
       endpoint: 'rough-entry/clarity/add',
       payload: {
@@ -2093,7 +2095,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 3);
+        companyCode.value;
     await _masterService.update(
       endpoint: 'rough-entry/clarity/$id',
       payload: {
@@ -2161,7 +2163,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 3);
+        companyCode.value;
     await _masterService.create(
       endpoint: 'rough-entry/color/add',
       payload: {
@@ -2185,7 +2187,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 3);
+        companyCode.value;
     await _masterService.update(
       endpoint: 'rough-entry/color/$id',
       payload: {
@@ -2275,7 +2277,7 @@ class DefaultController extends GetxController {
     String sflag = 'Y',
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 3);
+        companyCode.value;
 
     int desiCode = code ?? 0;
     if (desiCode <= 0) {
@@ -2331,7 +2333,7 @@ class DefaultController extends GetxController {
     }
 
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 3);
+        companyCode.value;
     await _masterService.update(
       endpoint: 'designation/$id',
       payload: {
@@ -2415,7 +2417,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.create(
       endpoint: 'rough-entry/shape/add',
       payload: {
@@ -2441,7 +2443,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.update(
       endpoint: 'rough-entry/shape/$id',
       payload: {
@@ -2507,7 +2509,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.create(
       endpoint: 'rough-entry/expense-group/add',
       payload: {
@@ -2531,7 +2533,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.update(
       endpoint: 'rough-entry/expense-group/$id',
       payload: {
@@ -2608,7 +2610,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.create(
       endpoint: 'rough-entry/expense/add',
       payload: {
@@ -2634,7 +2636,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.update(
       endpoint: 'rough-entry/expense/$id',
       payload: {
@@ -2711,7 +2713,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.create(
       endpoint: 'rough-entry/type/add',
       payload: {
@@ -2739,7 +2741,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.update(
       endpoint: 'rough-entry/type/$id',
       payload: {
@@ -2806,7 +2808,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.create(
       endpoint: 'rough-entry/polish-type/add',
       payload: {
@@ -2830,7 +2832,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.update(
       endpoint: 'rough-entry/polish-type/$id',
       payload: {
@@ -2904,6 +2906,10 @@ class DefaultController extends GetxController {
     String? accNo,
     String? insurance,
     String? finalAmt,
+    String? memoInvoicePrefix,
+    String? memoInvoiceSuffix,
+    String? invoicePrefix,
+    String? invoiceSuffix,
     String? fromDate,
     String? toDate,
     int? sortId,
@@ -2929,6 +2935,11 @@ class DefaultController extends GetxController {
         if (accNo != null && accNo.isNotEmpty) 'AccNo': accNo,
         if (insurance != null && insurance.isNotEmpty) 'Insurance': insurance,
         if (finalAmt != null && finalAmt.isNotEmpty) 'FinalAmt': finalAmt,
+        // Always sent so the value can also be cleared
+        'MemoInvoicePrefix': memoInvoicePrefix ?? '',
+        'MemoInvoiceSuffix': memoInvoiceSuffix ?? '',
+        'InvoicePrefix': invoicePrefix ?? '',
+        'InvoiceSuffix': invoiceSuffix ?? '',
         if (fromDate != null && fromDate.isNotEmpty) 'FromDate': fromDate,
         if (toDate != null && toDate.isNotEmpty) 'ToDate': toDate,
         if (sortId != null) 'SortID': sortId,
@@ -2960,6 +2971,10 @@ class DefaultController extends GetxController {
     String? accNo,
     String? insurance,
     String? finalAmt,
+    String? memoInvoicePrefix,
+    String? memoInvoiceSuffix,
+    String? invoicePrefix,
+    String? invoiceSuffix,
     String? fromDate,
     String? toDate,
     int? sortId,
@@ -2985,6 +3000,11 @@ class DefaultController extends GetxController {
         if (accNo != null && accNo.isNotEmpty) 'AccNo': accNo,
         if (insurance != null && insurance.isNotEmpty) 'Insurance': insurance,
         if (finalAmt != null && finalAmt.isNotEmpty) 'FinalAmt': finalAmt,
+        // Always sent so the value can also be cleared
+        'MemoInvoicePrefix': memoInvoicePrefix ?? '',
+        'MemoInvoiceSuffix': memoInvoiceSuffix ?? '',
+        'InvoicePrefix': invoicePrefix ?? '',
+        'InvoiceSuffix': invoiceSuffix ?? '',
         if (fromDate != null && fromDate.isNotEmpty) 'FromDate': fromDate,
         if (toDate != null && toDate.isNotEmpty) 'ToDate': toDate,
         if (sortId != null) 'SortID': sortId,
@@ -3034,7 +3054,7 @@ class DefaultController extends GetxController {
 
   Future<Map<String, dynamic>?> getNextBranchCode({int? companyCodeParam}) async {
     final code = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     return await _masterService.fetchNextCode(
       endpoint: 'rough-entry/branch/nextCode?CompanyCode=$code',
       errorContext: 'getNextBranchCode',
@@ -3048,7 +3068,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.create(
       endpoint: 'rough-entry/branch/add',
       payload: {
@@ -3072,7 +3092,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.update(
       endpoint: 'rough-entry/branch/$id',
       payload: {
@@ -3092,7 +3112,7 @@ class DefaultController extends GetxController {
     int? companyCodeParam,
   }) async {
     final codeToUse = companyCodeParam ??
-        (companyCode.value != 0 ? companyCode.value : 1);
+        companyCode.value;
     await _masterService.delete(
       endpoint: 'rough-entry/branch/$id',
       isDeleteLoading: isDeleteLoading,
@@ -3479,7 +3499,7 @@ class DefaultController extends GetxController {
     isLoadingBranchTransfer.value = true;
     try {
       final compCode = companyCodeParam ??
-          (companyCode.value != 0 ? companyCode.value : 3);
+          companyCode.value;
 
       int crId = 0;
       if (fromUserId != null) {
@@ -3586,7 +3606,7 @@ class DefaultController extends GetxController {
     isLoading.value = true;
     try {
       final codeToUse = companyCodeParam ??
-          (companyCode.value != 0 ? companyCode.value : 3);
+          companyCode.value;
       final totalStockPc = items.fold<int>(0, (sum, i) => sum + i.stockPc);
       final totalStockWt = double.parse(
           items.fold<double>(0.0, (sum, i) => sum + i.stockWt).toStringAsFixed(3));
@@ -3891,7 +3911,7 @@ class DefaultController extends GetxController {
     try {
       final cleanId = id.toString().trim();
       final codeToUse = companyCodeParam ??
-          (companyCode.value != 0 ? companyCode.value : 3);
+          companyCode.value;
 
       final totalStockPc = items.fold<int>(0, (sum, i) => sum + i.stockPc);
       final totalStockWt = double.parse(
@@ -4294,7 +4314,7 @@ class DefaultController extends GetxController {
     isLoadingInternalStockTransfer.value = true;
     try {
       final compCode = companyCodeParam ??
-          (companyCode.value != 0 ? companyCode.value : 3);
+          companyCode.value;
 
       int crId = 0;
       if (fromUserId != null) {
@@ -4423,7 +4443,7 @@ class DefaultController extends GetxController {
     isLoading.value = true;
     try {
       final codeToUse = companyCodeParam ??
-          (companyCode.value != 0 ? companyCode.value : 3);
+          companyCode.value;
 
       final totalStockPc = items.fold<int>(0, (sum, i) => sum + i.stockPc);
       final totalStockWt = double.parse(
@@ -4766,7 +4786,7 @@ class DefaultController extends GetxController {
     try {
       final cleanId = id.toString().trim();
       final codeToUse = companyCodeParam ??
-          (companyCode.value != 0 ? companyCode.value : 3);
+          companyCode.value;
 
       final totalStockPc = items.fold<int>(0, (sum, i) => sum + i.stockPc);
       final totalStockWt = double.parse(
@@ -5564,6 +5584,40 @@ class DefaultController extends GetxController {
     return <PaymentDetailsModel>[].obs;
   }
 
+  /// Puts the saved Payment Mst row (from the add / update response) into the
+  /// search list straight away, before the full reload from the server.
+  void _upsertPaymentMst(dynamic data) {
+    if (data is! Map) return;
+    try {
+      final saved = PaymentMstModel.fromJson(Map<String, dynamic>.from(data));
+      if (saved.paymentMstID == null) return;
+      final updated = paymentMstList.toList();
+      final index = updated.indexWhere((e) => e.paymentMstID == saved.paymentMstID);
+      if (index >= 0) {
+        updated[index] = saved;
+      } else {
+        updated.insert(0, saved); // list is newest first
+      }
+      paymentMstList.value = updated;
+    } catch (e) {
+      if (kDebugMode) log('upsertPaymentMst: $e');
+    }
+  }
+
+  /// Reloads every list the Payment screen shows (search list, details,
+  /// ledger, outstanding, pending) after add / edit / delete.
+  Future<void> _refreshPaymentLists() async {
+    // Search list first, so the table is right as soon as possible.
+    await getPaymentMstData(force: true);
+    await Future.wait([
+      getPaymentDetData(force: true),
+      getPaymentDetAccData(force: true),
+      getCreditDebitData(force: true),
+      getOutstandingPurchaseSaleDetails(force: true),
+      getPendingPaymentData(force: true),
+    ]);
+  }
+
   Future<void> addPaymentData({
     DateTime? paymentDate,
     String? paymentDay,
@@ -5617,6 +5671,7 @@ class DefaultController extends GetxController {
 
       if (response.statusCode == 200) {
         isLoading.value = false;
+        _upsertPaymentMst(response.data['data']);
         // if (bookDataGridSource.isNotEmpty) {
         if (bookJAmtRs! > 0 || bookUAmtRs! > 0) {
           addCreditDebitData(
@@ -5810,12 +5865,10 @@ class DefaultController extends GetxController {
         //
         //   successDialog(messageText: response.data['message']);
         // }
-        await getPaymentMstData();
-        await getPaymentDetData();
-        await getPaymentDetAccData();
-        await getCreditDebitData();
-        await getOutstandingPurchaseSaleDetails();
-        await getPendingPaymentData();
+        // Reload from the server (force) so the Payment search list and
+        // balances show the saved record - without force these returned early
+        // because the lists were already loaded.
+        await _refreshPaymentLists();
         /* } else {
         isLoading.value = false;
         errorDialog(messageText: 'Failed to Add data: ${response.statusCode}');
@@ -5888,6 +5941,7 @@ class DefaultController extends GetxController {
 
       if (response.statusCode == 200) {
         isLoading.value = false;
+        _upsertPaymentMst(response.data['data']);
         // if (bookDataGridSource.isNotEmpty) {
         if (bookJAmtRs! > 0 || bookUAmtRs! > 0) {
           addCreditDebitData(
@@ -6078,12 +6132,10 @@ class DefaultController extends GetxController {
         // if (bookDataGridSource.isEmpty && accountDataGridSource.isEmpty) {
         //   successDialog(messageText: response.data['message']);
         // }
-        await getPaymentMstData();
-        await getPaymentDetData();
-        await getPaymentDetAccData();
-        await getCreditDebitData();
-        await getOutstandingPurchaseSaleDetails();
-        await getPendingPaymentData();
+        // Reload from the server (force) so the Payment search list and
+        // balances show the saved record - without force these returned early
+        // because the lists were already loaded.
+        await _refreshPaymentLists();
       } else {
         isLoading.value = false;
         errorDialog(messageText: 'Failed to Add data: ${response.statusCode}');
@@ -7098,6 +7150,476 @@ class DefaultController extends GetxController {
     }
   }
 
+  // ==================== POLISH SALE (Memo Issue style screen) ====================
+
+  /// Next Sale Invoice No for the selected company, built from
+  /// CompanyMst.InvoicePrefix + running number + CompanyMst.InvoiceSuffix.
+  /// This is only a preview - the server assigns the final number on save.
+  Future<String?> getNextSaleInvoiceNo() async {
+    try {
+      final response = await ApiService.to.get(
+        '${baseUrl}rough-entry/polish-sale/next-invoice-no',
+        queryParameters: {'CompanyCode': companyCode.value},
+      );
+      if (response.statusCode == 200 && response.data is Map) {
+        return response.data['invoiceNo']?.toString();
+      }
+    } catch (error) {
+      if (kDebugMode) {
+        log('getNextSaleInvoiceNo error: $error');
+      }
+    }
+    return null;
+  }
+
+  /// Rough Type for a sale item - used by the stock report to reduce rough
+  /// stock. ROUGH items take it from the selected purchase invoice; POLISH
+  /// items return 0 so they do not reduce rough stock.
+  int _saleItemRoughTypeCode(Map value) {
+    final String type = (value['type'] ?? 'ROUGH').toString().toUpperCase();
+    if (type != 'ROUGH') return 0;
+    final int? purMstId = int.tryParse(value['roughPurMstID']?.toString() ?? '');
+    if (purMstId != null) {
+      final details =
+          roughDetailsModel.where((d) => d.roughPurMstID == purMstId).toList();
+      if (details.isNotEmpty) {
+        final int? qualityCode = int.tryParse(value['qualityCode']?.toString() ?? '');
+        final int? charniCode = int.tryParse(value['charniCode']?.toString() ?? '');
+        final best = details.firstWhereOrNull((d) =>
+                (qualityCode == null || d.roughQualityCode == qualityCode) &&
+                (charniCode == null || d.roughCharniCode == charniCode)) ??
+            details.first;
+        if (best.roughTypeCode != null) return best.roughTypeCode!;
+      }
+    }
+    return int.tryParse(value['roughTypeCode']?.toString() ?? '') ?? 1;
+  }
+
+  Map<String, dynamic> _polishSaleMasterParams({
+    required DateTime invoiceDate,
+    required String sflag,
+    invoiceNo,
+    partyCode,
+    brokerCode,
+    dueDays,
+    dueDate,
+    String? rdType,
+    double? dollarRate,
+    int? fromUserId,
+    int? totalPcs,
+    double? totalAmt,
+    double? totalAmtDollar,
+    totalWt,
+    totalRate,
+    double? totalRateDollar,
+    Map<String, dynamic>? summary,
+  }) {
+    final String now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+    final String invDate = DateFormat('yyyy-MM-dd HH:mm:ss').format(invoiceDate);
+    return {
+      "PolishDate": invDate,
+      // Only a placeholder on create - the server generates the real Invoice No
+      if (invoiceNo != null && invoiceNo.toString().isNotEmpty) "InvoiceNo": "$invoiceNo",
+      "InvoiceDate": invDate,
+      if (dueDays != null) "DueDay": int.tryParse(dueDays.toString()) ?? 0,
+      if (dueDate != null) "DueDate": dueDate,
+      "TotRsAmt": totalAmt,
+      "TotUsdAmt": totalAmtDollar ?? totalAmt,
+      "RoundRs": 0,
+      "RoundUsd": 0,
+      "NetUsdAmount": totalAmtDollar ?? totalAmt,
+      "NetRsAmount": totalAmt,
+      "RdType": rdType ?? "RS",
+      "DollarRate": dollarRate ?? 100,
+      "PaymentRec": "N",
+      "BroPer": 0,
+      "BroRsAmount": 0,
+      "BroUSDAmount": 0,
+      "BrokerCode": int.tryParse(brokerCode?.toString() ?? ''),
+      "BankCode": 0,
+      "PartyCode": int.tryParse(partyCode?.toString() ?? ''),
+      "FinalRsAmount": totalAmt,
+      "FinalUsdAmount": totalAmtDollar ?? totalAmt,
+      "TPcs": totalPcs ?? 0,
+      "TWeight": totalWt,
+      "TRate": totalRate,
+      "TAmount": totalAmt,
+      "TDRate": totalRateDollar ?? totalRate,
+      "TDAmount": totalAmtDollar ?? totalAmt,
+      "Sflag": sflag,
+      "SDate": now,
+      "LogID": fromUserId ?? currentUserId.value,
+      "PCID": "TESTWEB",
+      "Ever": 0,
+      "CompanyCode": companyCode.value,
+      // GST / Net / Round / Brokerage / Final from the Sale screen summary
+      ...?summary,
+    };
+  }
+
+  Map<String, dynamic> _polishSaleItemParams(Map value, {required int polishSaleMstID, required int srNo}) {
+    int? toInt(dynamic v) => v == null ? null : int.tryParse(v.toString());
+    final int? purMstId = toInt(value['roughPurMstID']);
+    final String invNo = value['invNo']?.toString() ?? '';
+    final String description = value['description']?.toString() ?? '';
+    return {
+      "PolishSaleMstID": polishSaleMstID,
+      "SrNo": srNo,
+      "ClarityCode": toInt(value['clarityCode']) ?? 0,
+      "CharniCode": toInt(value['charniCode']) ?? 0,
+      "ShapeCode": toInt(value['shapeCode']) ?? 0,
+      "ColorCode": toInt(value['colorCode']) ?? 0,
+      "QualityCode": toInt(value['qualityCode']) ?? 0,
+      "Pcs": toInt(value['pcs']) ?? 1,
+      "Carats": double.tryParse(value['wt']?.toString() ?? '0') ?? 0,
+      "RateRs": double.tryParse((value['rateRs'] ?? value['rate'])?.toString() ?? '0') ?? 0,
+      "AmountRs": double.tryParse((value['amountRs'] ?? value['amount'])?.toString() ?? '0') ?? 0,
+      "RateD": double.tryParse((value['rateDollar'] ?? value['rateD'])?.toString() ?? '0') ?? 0,
+      "AmountD": double.tryParse((value['amountDollar'] ?? value['amountD'])?.toString() ?? '0') ?? 0,
+      "PenCarats": double.tryParse(value['penWt']?.toString() ?? '') ?? 0,
+      "Type": value['type']?.toString() ?? 'ROUGH',
+      if (invNo.isNotEmpty) "InvNo": invNo,
+      if (purMstId != null) "RoughPurMstID": purMstId,
+      "RoughTypeCode": _saleItemRoughTypeCode(value),
+      if (description.isNotEmpty) "Description": description,
+    };
+  }
+
+  /// Saves one sale item: PUT when it already has an id, otherwise POST.
+  Future<void> _savePolishSaleItem(Map value,
+      {required int polishSaleMstID, required int srNo}) async {
+    final dio = ApiService.to.dio;
+    final params = _polishSaleItemParams(value, polishSaleMstID: polishSaleMstID, srNo: srNo);
+    final String id = value['id']?.toString() ?? '';
+    if (id.isNotEmpty) {
+      await dio.put('${baseUrl}rough-entry/sale-details/$id', data: jsonEncode(params));
+    } else {
+      await dio.post('${baseUrl}rough-entry/sale-details/add', data: jsonEncode(params));
+    }
+  }
+
+  /// Party ledger (CreditDebitMst) rows for a sale - same two rows the old
+  /// Sale screen wrote on create: company party CR, sale party DR.
+  Future<void> _addPolishSaleLedger({
+    required int polishSaleMstID,
+    required String invoiceNo,
+    required DateTime invoiceDate,
+    partyCode,
+    brokerCode,
+    dueDays,
+    dueDate,
+    double? totalAmt,
+    totalWt,
+  }) async {
+    await Future.wait(List.generate(2, (index) {
+      return addCreditDebitData(
+        mstId: polishSaleMstID,
+        purMstId: 0,
+        saleMstId: polishSaleMstID,
+        invoiceDate: invoiceDate,
+        orgInvoiceDate: DateFormat('yyyy-MM-dd').format(invoiceDate),
+        paymentMstId: 0,
+        dueDate: dueDate,
+        remarks1: ' ',
+        remarks2: ' ',
+        partyCode: index == 0 ? companyPartyCode.value.toString() : partyCode,
+        creditRs: index == 0 ? totalAmt : 0.00,
+        debitRs: index == 0 ? 0.00 : totalAmt,
+        invAmtRs: totalAmt,
+        drCr: index == 0 ? 'CR' : 'DR',
+        formType: 'Sale',
+        entryType: index == 0 ? 'NIL' : 'PARTY',
+        traType: index == 0 ? 'NIL' : 'PARTY',
+        formName: 'FrmSaleEntry',
+        perPartyCode: index == 0 ? partyCode : companyPartyCode.value.toString(),
+        orgCt: totalWt,
+        dueDays: dueDays,
+        invoiceNo: invoiceNo,
+        srNo: index + 1,
+        brokerCode: brokerCode,
+      );
+    }));
+  }
+
+  Future<void> _refreshPolishSaleData() async {
+    await getSaleData(force: true);
+    await getSaleDetailsData(force: true);
+    await getCreditDebitData(force: true);
+    await getOutstandingPurchaseSaleDetails(force: true);
+    await getPendingPaymentData(force: true);
+  }
+
+  /// Builds the Sale invoice PDF and shows / shares it.
+  Future<void> printPolishSaleInvoice({
+    required int id,
+    required String invoiceNo,
+    required DateTime invoiceDate,
+    required String partyCode,
+    required String brokerCode,
+    required String dueDateText,
+    required String dueDays,
+    required List entries,
+    required double totalAmt,
+    required double totalWt,
+    required double totalRate,
+    bool preview = true,
+    bool share = false,
+  }) async {
+    final pdfData = await SaleInvoiceGenerator().generateInvoice(
+      id: id,
+      invoiceDate: invoiceDate,
+      invoiceNo: invoiceNo,
+      partyCode: partyCode,
+      brokerCode: brokerCode,
+      dueDate: dueDateText,
+      dueDays: dueDays,
+      entries: entries,
+      totalWt: totalWt,
+      totalAmt: totalAmt,
+      totalRate: totalRate,
+    );
+    if (preview) {
+      await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => pdfData);
+    }
+    if (share && !kDebugMode) {
+      await Printing.sharePdf(bytes: pdfData, filename: '$invoiceNo.pdf');
+    }
+  }
+
+  /// Create a Polish Sale (master + items + party ledger). Returns the saved
+  /// {id, invoiceNo} or null on failure.
+  Future<Map<String, dynamic>?> addPolishSaleData({
+    required String partyCode,
+    required DateTime invoiceDate,
+    String? brokerCode,
+    dueDays,
+    dueDate,
+    String? rdType,
+    double? dollarRate,
+    int? fromUserId,
+    required List<Map<String, dynamic>> entries,
+    required double totalAmt,
+    double? totalAmtDollar,
+    required double totalWt,
+    required double totalRate,
+    double? totalRateDollar,
+    int? totalPcs,
+    Map<String, dynamic>? summary,
+  }) async {
+    try {
+      isLoading.value = true;
+      final dio = ApiService.to.dio;
+      final params = _polishSaleMasterParams(
+        invoiceDate: invoiceDate,
+        sflag: 'I',
+        partyCode: partyCode,
+        brokerCode: brokerCode,
+        dueDays: dueDays,
+        dueDate: dueDate,
+        rdType: rdType,
+        dollarRate: dollarRate,
+        fromUserId: fromUserId,
+        totalPcs: totalPcs,
+        totalAmt: totalAmt,
+        totalAmtDollar: totalAmtDollar,
+        totalWt: totalWt,
+        totalRate: totalRate,
+        totalRateDollar: totalRateDollar,
+        summary: summary,
+      );
+
+      final response =
+          await dio.post('${baseUrl}rough-entry/polish-sale/add', data: jsonEncode(params));
+      final data = response.data is Map ? response.data['data'] : null;
+      if (data == null) {
+        isLoading.value = false;
+        errorDialog(messageText: 'Failed to save Sale: ${response.data?['message'] ?? ''}');
+        return null;
+      }
+
+      final int mstId = int.tryParse(data['PolishSaleMstID'].toString()) ?? 0;
+      final String invoiceNo = data['InvoiceNo']?.toString() ?? '';
+
+      for (int i = 0; i < entries.length; i++) {
+        await _savePolishSaleItem(entries[i], polishSaleMstID: mstId, srNo: i + 1);
+      }
+      await _addPolishSaleLedger(
+        polishSaleMstID: mstId,
+        invoiceNo: invoiceNo,
+        invoiceDate: invoiceDate,
+        partyCode: partyCode,
+        brokerCode: brokerCode,
+        dueDays: dueDays,
+        dueDate: dueDate,
+        // party ledger = Final Rs Amount (items + GST, after rounding)
+        totalAmt: (summary?['FinalRsAmount'] as num?)?.toDouble() ?? totalAmt,
+        totalWt: totalWt,
+      );
+      await _refreshPolishSaleData();
+      isLoading.value = false;
+      successDialog(messageText: response.data['message']?.toString() ?? 'Sale saved');
+      return {'id': mstId, 'invoiceNo': invoiceNo};
+    } catch (error) {
+      isLoading.value = false;
+      errorDialog(messageText: 'An unexpected error occurred while saving the Sale.');
+      if (kDebugMode) {
+        log('addPolishSaleData error: $error');
+      }
+      return null;
+    }
+  }
+
+  /// Update a Polish Sale. Invoice No never changes. The sale's ledger rows are
+  /// replaced (old rows deleted, new rows written) so edits don't duplicate them.
+  Future<bool> updatePolishSaleData({
+    required int id,
+    required String invoiceNo,
+    required String partyCode,
+    required DateTime invoiceDate,
+    String? brokerCode,
+    dueDays,
+    dueDate,
+    String? rdType,
+    double? dollarRate,
+    int? fromUserId,
+    required List<Map<String, dynamic>> entries,
+    required double totalAmt,
+    double? totalAmtDollar,
+    required double totalWt,
+    required double totalRate,
+    double? totalRateDollar,
+    int? totalPcs,
+    Map<String, dynamic>? summary,
+  }) async {
+    try {
+      isLoading.value = true;
+      final dio = ApiService.to.dio;
+      final params = _polishSaleMasterParams(
+        invoiceDate: invoiceDate,
+        sflag: 'U',
+        partyCode: partyCode,
+        brokerCode: brokerCode,
+        dueDays: dueDays,
+        dueDate: dueDate,
+        rdType: rdType,
+        dollarRate: dollarRate,
+        fromUserId: fromUserId,
+        totalPcs: totalPcs,
+        totalAmt: totalAmt,
+        totalAmtDollar: totalAmtDollar,
+        totalWt: totalWt,
+        totalRate: totalRate,
+        totalRateDollar: totalRateDollar,
+        summary: summary,
+      );
+
+      final response =
+          await dio.put('${baseUrl}rough-entry/polish-sale/$id', data: jsonEncode(params));
+      if (response.data is! Map || response.data['data'] == null) {
+        isLoading.value = false;
+        errorDialog(messageText: 'Failed to update Sale: ${response.data?['message'] ?? ''}');
+        return false;
+      }
+
+      for (int i = 0; i < entries.length; i++) {
+        await _savePolishSaleItem(entries[i], polishSaleMstID: id, srNo: i + 1);
+      }
+      await deleteSaleCreditDebitDetails(id: id);
+      await _addPolishSaleLedger(
+        polishSaleMstID: id,
+        invoiceNo: invoiceNo,
+        invoiceDate: invoiceDate,
+        partyCode: partyCode,
+        brokerCode: brokerCode,
+        dueDays: dueDays,
+        dueDate: dueDate,
+        // party ledger = Final Rs Amount (items + GST, after rounding)
+        totalAmt: (summary?['FinalRsAmount'] as num?)?.toDouble() ?? totalAmt,
+        totalWt: totalWt,
+      );
+      await _refreshPolishSaleData();
+      isLoading.value = false;
+      successDialog(messageText: response.data['message']?.toString() ?? 'Sale updated');
+      return true;
+    } catch (error) {
+      isLoading.value = false;
+      errorDialog(messageText: 'An unexpected error occurred while updating the Sale.');
+      if (kDebugMode) {
+        log('updatePolishSaleData error: $error');
+      }
+      return false;
+    }
+  }
+
+  /// Delete one sale item (used when removing an item while editing a sale).
+  Future<bool> deletePolishSaleItem({required int id}) async {
+    try {
+      final response = await ApiService.to.dio.delete('${baseUrl}rough-entry/sale-details/$id');
+      if (response.statusCode == 200) {
+        await getSaleDetailsData(force: true);
+        return true;
+      }
+    } catch (error) {
+      if (kDebugMode) {
+        log('deletePolishSaleItem error: $error');
+      }
+    }
+    errorDialog(messageText: 'Failed to delete the sale item.');
+    return false;
+  }
+
+  /// Delete a Polish Sale with its items and party ledger rows.
+  Future<bool> deletePolishSaleData({required int id, required List entries}) async {
+    try {
+      isDeleteLoading.value = true;
+      await deleteSaleCreditDebitDetails(id: id);
+      final dio = ApiService.to.dio;
+      final response = await dio.delete('${baseUrl}rough-entry/polish-sale/$id');
+      if (response.statusCode != 200) {
+        isDeleteLoading.value = false;
+        errorDialog(messageText: 'Failed to delete Sale: ${response.statusCode}');
+        return false;
+      }
+      for (final value in entries) {
+        final String detId = value['id']?.toString() ?? '';
+        if (detId.isNotEmpty) {
+          await dio.delete('${baseUrl}rough-entry/sale-details/$detId');
+        }
+      }
+      await _refreshPolishSaleData();
+      isDeleteLoading.value = false;
+      successDialog(messageText: response.data?['message']?.toString() ?? 'Sale deleted');
+      return true;
+    } catch (error) {
+      isDeleteLoading.value = false;
+      errorDialog(messageText: 'An unexpected error occurred while deleting the Sale.');
+      if (kDebugMode) {
+        log('deletePolishSaleData error: $error');
+      }
+      return false;
+    }
+  }
+
+  /// Returns the next Memo No for the selected company, built from
+  /// CompanyMst.MemoInvoicePrefix + running number + CompanyMst.MemoInvoiceSuffix.
+  /// This is only a preview - the server assigns the final number on save.
+  Future<String?> getNextMemoIssueNo() async {
+    try {
+      final response = await ApiService.to.get(
+        '${baseUrl}rough-entry/memo-issue/next-memo-no',
+        queryParameters: {'CompanyCode': companyCode.value},
+      );
+      if (response.statusCode == 200 && response.data is Map) {
+        return response.data['memoNo']?.toString();
+      }
+    } catch (error) {
+      if (kDebugMode) {
+        log('getNextMemoIssueNo error: $error');
+      }
+    }
+    return null;
+  }
+
   Future<bool> addMemoIssueData(
       {String? partyCode,
       invoiceNo,
@@ -7332,15 +7854,14 @@ class DefaultController extends GetxController {
               rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
               amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
               roughName: value['rough'] ?? '1',
-              description: value['description'] ?? '',
               type: value['type'] ?? 'ROUGH',
               invNo: value['invNo'],
               roughPurMstID: value['roughPurMstID'],
-              clarityCode: value['clarityCode'] ?? value['clarity'],
-              charniCode: value['charniCode'] ?? value['charni'],
-              shapeCode: value['shapeCode'] ?? value['shape'],
-              colorCode: value['colorCode'] ?? value['color'],
-              qualityCode: value['qualityCode'] ?? value['quality'],
+              clarityCode: value['clarityCode'] ?? 0,
+              charniCode: value['charniCode'] ?? 0,
+              shapeCode: value['shapeCode'] ?? 0,
+              colorCode: value['colorCode'] ?? 0,
+              qualityCode: value['qualityCode'] ?? 0,
               pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
               recPcs: int.tryParse(value['recPcs']?.toString() ?? '0'),
               penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
@@ -7989,11 +8510,11 @@ class DefaultController extends GetxController {
                 type: value['type'] ?? 'ROUGH',
                 invNo: value['invNo'],
                 roughPurMstID: value['roughPurMstID'],
-                clarityCode: value['clarityCode'] ?? value['clarity'],
-                charniCode: value['charniCode'] ?? value['charni'],
-                shapeCode: value['shapeCode'] ?? value['shape'],
-                colorCode: value['colorCode'] ?? value['color'],
-                qualityCode: value['qualityCode'] ?? value['quality'],
+                clarityCode: value['clarityCode'] ?? 0,
+                charniCode: value['charniCode'] ?? 0,
+                shapeCode: value['shapeCode'] ?? 0,
+                colorCode: value['colorCode'] ?? 0,
+                qualityCode: value['qualityCode'] ?? 0,
                 pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
                 penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
                 description: value['description'],
@@ -8159,15 +8680,14 @@ class DefaultController extends GetxController {
                 rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
                 amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
                 roughName: value['rough'] ?? '1',
-                description: value['description'] ?? '',
                 type: value['type'] ?? 'ROUGH',
                 invNo: value['invNo'],
                 roughPurMstID: value['roughPurMstID'],
-                clarityCode: value['clarityCode'] ?? value['clarity'],
-                charniCode: value['charniCode'] ?? value['charni'],
-                shapeCode: value['shapeCode'] ?? value['shape'],
-                colorCode: value['colorCode'] ?? value['color'],
-                qualityCode: value['qualityCode'] ?? value['quality'],
+                clarityCode: value['clarityCode'] ?? 0,
+                charniCode: value['charniCode'] ?? 0,
+                shapeCode: value['shapeCode'] ?? 0,
+                colorCode: value['colorCode'] ?? 0,
+                qualityCode: value['qualityCode'] ?? 0,
                 pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
                 recPcs: int.tryParse(value['recPcs']?.toString() ?? '0'),
                 penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
@@ -8188,15 +8708,14 @@ class DefaultController extends GetxController {
                 rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
                 amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
                 roughName: value['rough'] ?? '1',
-                description: value['description'] ?? '',
                 type: value['type'] ?? 'ROUGH',
                 invNo: value['invNo'],
                 roughPurMstID: value['roughPurMstID'],
-                clarityCode: value['clarityCode'] ?? value['clarity'],
-                charniCode: value['charniCode'] ?? value['charni'],
-                shapeCode: value['shapeCode'] ?? value['shape'],
-                colorCode: value['colorCode'] ?? value['color'],
-                qualityCode: value['qualityCode'] ?? value['quality'],
+                clarityCode: value['clarityCode'] ?? 0,
+                charniCode: value['charniCode'] ?? 0,
+                shapeCode: value['shapeCode'] ?? 0,
+                colorCode: value['colorCode'] ?? 0,
+                qualityCode: value['qualityCode'] ?? 0,
                 pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
                 recPcs: int.tryParse(value['recPcs']?.toString() ?? '0'),
                 penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
@@ -8475,7 +8994,6 @@ class DefaultController extends GetxController {
         if (invNo != null && invNo.toString().isNotEmpty) "InvNo": invNo,
         if (roughPurMstID != null) "RoughPurMstID": roughPurMstID is int ? roughPurMstID : (int.tryParse(roughPurMstID?.toString() ?? '') ?? roughPurMstID),
         "RoughTypeCode": int.tryParse(roughName?.toString() ?? '1') ?? 1,
-        "Description": description
       };
 
       final response = await dio.post(
@@ -8673,7 +9191,6 @@ class DefaultController extends GetxController {
         if (invNo != null && invNo.toString().isNotEmpty) "InvNo": invNo,
         if (roughPurMstID != null) "RoughPurMstID": roughPurMstID is int ? roughPurMstID : (int.tryParse(roughPurMstID?.toString() ?? '') ?? roughPurMstID),
         "RoughTypeCode": int.tryParse(roughName?.toString() ?? '1') ?? 1,
-        "Description": description
       };
 
       final response = await dio.put(
@@ -9145,6 +9662,8 @@ class DefaultController extends GetxController {
           await dio.delete('${baseUrl}rough-entry/payment-mst/$id');
 
       if (response.statusCode == 200) {
+        paymentMstList.value =
+            paymentMstList.where((e) => e.paymentMstID != id).toList();
         if (kDebugMode) {
           print('Deleted!');
         }
@@ -9161,11 +9680,10 @@ class DefaultController extends GetxController {
         // }
 
         // After processing deletion, refresh data and stop loading
-        await getPaymentMstData();
-        await getPaymentDetData();
-        await getPaymentDetAccData();
-        await getOutstandingPurchaseSaleDetails();
-        await getPendingPaymentData();
+        // Reload from the server (force) so the Payment search list and
+        // balances show the saved record - without force these returned early
+        // because the lists were already loaded.
+        await _refreshPaymentLists();
 
         isDeleteLoading.value = false;
 

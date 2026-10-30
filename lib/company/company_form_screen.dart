@@ -55,6 +55,10 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
   final TextEditingController _accNoController = TextEditingController();
   final TextEditingController _insuranceController = TextEditingController();
   final TextEditingController _finalAmtController = TextEditingController();
+  final TextEditingController _memoInvoicePrefixController = TextEditingController();
+  final TextEditingController _memoInvoiceSuffixController = TextEditingController();
+  final TextEditingController _invoicePrefixController = TextEditingController();
+  final TextEditingController _invoiceSuffixController = TextEditingController();
   final TextEditingController _fromDateController = TextEditingController();
   final TextEditingController _toDateController = TextEditingController();
   final TextEditingController _sortIdController = TextEditingController();
@@ -84,6 +88,10 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
   final FocusNode _bankAddFocus = FocusNode();
   final FocusNode _insuranceFocus = FocusNode();
   final FocusNode _finalAmtFocus = FocusNode();
+  final FocusNode _memoInvoicePrefixFocus = FocusNode();
+  final FocusNode _memoInvoiceSuffixFocus = FocusNode();
+  final FocusNode _invoicePrefixFocus = FocusNode();
+  final FocusNode _invoiceSuffixFocus = FocusNode();
   final FocusNode _fromDateFocus = FocusNode();
   final FocusNode _toDateFocus = FocusNode();
   final FocusNode _sortIdFocus = FocusNode();
@@ -158,6 +166,10 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
     _accNoController.dispose();
     _insuranceController.dispose();
     _finalAmtController.dispose();
+    _memoInvoicePrefixController.dispose();
+    _memoInvoiceSuffixController.dispose();
+    _invoicePrefixController.dispose();
+    _invoiceSuffixController.dispose();
     _fromDateController.dispose();
     _toDateController.dispose();
     _sortIdController.dispose();
@@ -180,6 +192,10 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
     _bankAddFocus.dispose();
     _insuranceFocus.dispose();
     _finalAmtFocus.dispose();
+    _memoInvoicePrefixFocus.dispose();
+    _memoInvoiceSuffixFocus.dispose();
+    _invoicePrefixFocus.dispose();
+    _invoiceSuffixFocus.dispose();
     _fromDateFocus.dispose();
     _toDateFocus.dispose();
     _sortIdFocus.dispose();
@@ -236,6 +252,10 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
       _accNoController.clear();
       _insuranceController.clear();
       _finalAmtController.text = 'Standard';
+      _memoInvoicePrefixController.clear();
+      _memoInvoiceSuffixController.clear();
+      _invoicePrefixController.clear();
+      _invoiceSuffixController.clear();
       _fromDateController.clear();
       _toDateController.clear();
       _sortIdController.clear();
@@ -295,6 +315,10 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
     _accNoController.clear();
     _insuranceController.clear();
     _finalAmtController.clear();
+    _memoInvoicePrefixController.clear();
+    _memoInvoiceSuffixController.clear();
+    _invoicePrefixController.clear();
+    _invoiceSuffixController.clear();
     _fromDateController.clear();
     _toDateController.clear();
     _sortIdController.clear();
@@ -382,6 +406,10 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
         accNo: _accNoController.text.trim(),
         insurance: _insuranceController.text.trim(),
         finalAmt: _finalAmtController.text.trim(),
+        memoInvoicePrefix: _memoInvoicePrefixController.text.trim(),
+        memoInvoiceSuffix: _memoInvoiceSuffixController.text.trim(),
+        invoicePrefix: _invoicePrefixController.text.trim(),
+        invoiceSuffix: _invoiceSuffixController.text.trim(),
         fromDate: _fromDateController.text.trim(),
         toDate: _toDateController.text.trim(),
         sortId: sortId,
@@ -406,6 +434,10 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
         accNo: _accNoController.text.trim(),
         insurance: _insuranceController.text.trim(),
         finalAmt: _finalAmtController.text.trim(),
+        memoInvoicePrefix: _memoInvoicePrefixController.text.trim(),
+        memoInvoiceSuffix: _memoInvoiceSuffixController.text.trim(),
+        invoicePrefix: _invoicePrefixController.text.trim(),
+        invoiceSuffix: _invoiceSuffixController.text.trim(),
         fromDate: _fromDateController.text.trim(),
         toDate: _toDateController.text.trim(),
         sortId: sortId,
@@ -476,6 +508,10 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
     _accNoController.text = item.bankAcNo ?? '';
     _insuranceController.text = item.insurance ?? '';
     _finalAmtController.text = item.invCode ?? '';
+    _memoInvoicePrefixController.text = item.memoInvoicePrefix ?? '';
+    _memoInvoiceSuffixController.text = item.memoInvoiceSuffix ?? '';
+    _invoicePrefixController.text = item.invoicePrefix ?? '';
+    _invoiceSuffixController.text = item.invoiceSuffix ?? '';
     _fromDateController.text = item.fromDate ?? '';
     _toDateController.text = item.toDate ?? '';
     _isActive.value = item.active ?? true;
@@ -864,7 +900,7 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
                   label: 'TIN No',
                   controller: _tinController,
                   focusNode: _tinFocus,
-                  nextFocusNode: _bankFocus,
+                  nextFocusNode: _memoInvoicePrefixFocus,
                   enabled: _isEnabled,
                   hintText: 'TIN12345',
                 );
@@ -906,9 +942,140 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
                 }
               },
             ),
+            const SizedBox(height: 12),
+            _buildMemoNoFormatRow(),
+            const SizedBox(height: 12),
+            _buildInvoiceNoFormatRow(),
           ],
         ),
       ),
+    );
+  }
+
+  /// Memo Issue No format: MemoInvoicePrefix + running no (0001 ...) + MemoInvoiceSuffix.
+  /// Changing prefix/suffix restarts numbering from 0001.
+  Widget _buildMemoNoFormatRow() => _buildNoFormatRow(
+        prefixLabel: 'Memo Prefix',
+        suffixLabel: 'Memo Suffix',
+        previewLabel: 'Memo No preview: ',
+        prefixController: _memoInvoicePrefixController,
+        suffixController: _memoInvoiceSuffixController,
+        prefixFocus: _memoInvoicePrefixFocus,
+        suffixFocus: _memoInvoiceSuffixFocus,
+        nextFocus: _invoicePrefixFocus,
+        prefixHint: 'ML/',
+        suffixHint: '/AK2000',
+      );
+
+  /// Polish Sale Invoice No format: InvoicePrefix + running no (0001 ...) + InvoiceSuffix.
+  Widget _buildInvoiceNoFormatRow() => _buildNoFormatRow(
+        prefixLabel: 'Invoice Prefix',
+        suffixLabel: 'Invoice Suffix',
+        previewLabel: 'Invoice No preview: ',
+        prefixController: _invoicePrefixController,
+        suffixController: _invoiceSuffixController,
+        prefixFocus: _invoicePrefixFocus,
+        suffixFocus: _invoiceSuffixFocus,
+        nextFocus: _bankFocus,
+        prefixHint: 'INV/',
+        suffixHint: '/26-27',
+      );
+
+  /// Prefix + Suffix fields with a live "0001" preview.
+  Widget _buildNoFormatRow({
+    required String prefixLabel,
+    required String suffixLabel,
+    required String previewLabel,
+    required TextEditingController prefixController,
+    required TextEditingController suffixController,
+    required FocusNode prefixFocus,
+    required FocusNode suffixFocus,
+    required FocusNode nextFocus,
+    required String prefixHint,
+    required String suffixHint,
+  }) {
+    final prefixWidget = AppTextField(
+      label: prefixLabel,
+      controller: prefixController,
+      focusNode: prefixFocus,
+      nextFocusNode: suffixFocus,
+      enabled: _isEnabled,
+      hintText: prefixHint,
+      inputFormatters: [LengthLimitingTextInputFormatter(50)],
+    );
+
+    final suffixWidget = AppTextField(
+      label: suffixLabel,
+      controller: suffixController,
+      focusNode: suffixFocus,
+      nextFocusNode: nextFocus,
+      enabled: _isEnabled,
+      hintText: suffixHint,
+      inputFormatters: [LengthLimitingTextInputFormatter(50)],
+    );
+
+    final preview = AnimatedBuilder(
+      animation: Listenable.merge([prefixController, suffixController]),
+      builder: (context, _) {
+        final memoNo =
+            '${prefixController.text.trim()}0001${suffixController.text.trim()}';
+        return Container(
+          height: 35,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          alignment: Alignment.centerLeft,
+          decoration: BoxDecoration(
+            color: AppColors.primary.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppColors.isDark ? AppColors.borderLight : AppColors.border, width: 1),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.receipt_long_rounded, size: 16, color: AppColors.primary),
+              const SizedBox(width: 8),
+              Text(previewLabel,
+                  style: TextStyle(fontSize: 12, color: AppColors.textPrimary)),
+              Flexible(
+                child: Text(
+                  memoNo,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 600) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(child: prefixWidget),
+              const SizedBox(width: 12),
+              Expanded(child: suffixWidget),
+              const SizedBox(width: 12),
+              Expanded(child: preview),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            prefixWidget,
+            const SizedBox(height: 12),
+            suffixWidget,
+            const SizedBox(height: 12),
+            preview,
+          ],
+        );
+      },
     );
   }
 

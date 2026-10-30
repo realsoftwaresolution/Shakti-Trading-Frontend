@@ -29,9 +29,11 @@ class _CompanySelectionDialogState extends State<CompanySelectionDialog> {
     _controller = Get.isRegistered<DefaultController>()
         ? Get.find<DefaultController>()
         : Get.put(DefaultController());
+    // Pre-select: current company (when switching) -> user's own company from
+    // login -> first company in the list (set once the list is loaded).
     _selectedCompanyCode = _controller.companyCode.value != 0
         ? _controller.companyCode.value
-        : 3;
+        : _controller.loginCompanyCode.value;
     _ensureCompaniesLoaded();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _proceedFocus.requestFocus();
@@ -48,7 +50,7 @@ class _CompanySelectionDialogState extends State<CompanySelectionDialog> {
                 .any((c) => c.companyCode == _selectedCompanyCode);
             if (!exists) {
               _selectedCompanyCode =
-                  _controller.companies.first.companyCode ?? 3;
+                  _controller.companies.first.companyCode ?? 0;
             }
           }
         });
@@ -63,7 +65,15 @@ class _CompanySelectionDialogState extends State<CompanySelectionDialog> {
   }
 
   Future<void> _handleProceed() async {
-    final int codeToSave = _selectedCompanyCode != 0 ? _selectedCompanyCode : 3;
+    // Use only a company that really exists in the loaded list - no default.
+    final companies = _controller.companies;
+    final int codeToSave = companies.any((c) => c.companyCode == _selectedCompanyCode)
+        ? _selectedCompanyCode
+        : (companies.isNotEmpty ? (companies.first.companyCode ?? 0) : 0);
+    if (codeToSave <= 0) {
+      infoDialog(messageText: 'No company found. Please add a company in Company master first.');
+      return;
+    }
     _controller.companyCode.value = codeToSave;
     SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setInt('companyCode', codeToSave);
@@ -175,7 +185,7 @@ class _CompanySelectionDialogState extends State<CompanySelectionDialog> {
                                 child: Row(
                                   crossAxisAlignment: CrossAxisAlignment.stretch,
                                   children: [
-                                    // Left Hero Panel: Abhinandan Diamond System Highlights & Luxury Diamond
+                                    // Left Hero Panel: Shakti Diamond System Highlights & Luxury Diamond
                                     Expanded(
                                       flex: 5,
                                       child: _buildLeftHeroSection(),
@@ -273,7 +283,7 @@ class _CompanySelectionDialogState extends State<CompanySelectionDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.max,
               children: [
-                // Top Brand Mark: Diamond Logo + Abhinandan DIAMOND
+                // Top Brand Mark: Diamond Logo + Shakti DIAMOND
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
@@ -629,13 +639,26 @@ class _CompanySelectionDialogState extends State<CompanySelectionDialog> {
               }
 
               final companies = _controller.companies;
-              final availableList = companies.isNotEmpty
-                  ? companies.toList()
-                  : [getCompanyDetails(3)];
+              if (companies.isEmpty) {
+                return Container(
+                  height: 100,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
+                  ),
+                  child: const Text(
+                    'No company found. Please add a company in Company master.',
+                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500, color: Color(0xFF64748B)),
+                  ),
+                );
+              }
+              final availableList = companies.toList();
 
               final int currentVal = availableList.any((e) => e.companyCode == _selectedCompanyCode)
                   ? _selectedCompanyCode
-                  : (availableList.first.companyCode ?? 3);
+                  : (availableList.first.companyCode ?? 0);
 
               final details = availableList.firstWhere(
                 (e) => e.companyCode == currentVal,
@@ -675,10 +698,10 @@ class _CompanySelectionDialogState extends State<CompanySelectionDialog> {
                           color: Color(0xFF0F172A),
                         ),
                         items: availableList.map((company) {
-                          final int code = company.companyCode ?? 3;
+                          final int code = company.companyCode ?? 0;
                           final String name = (company.companyName != null && company.companyName!.trim().isNotEmpty)
                               ? company.companyName!
-                              : 'Abhinandan Diamond';
+                              : 'Company $code';
                           return DropdownMenuItem<int>(
                             value: code,
                             child: Row(

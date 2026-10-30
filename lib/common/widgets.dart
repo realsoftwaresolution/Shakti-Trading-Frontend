@@ -392,35 +392,30 @@ String getPartyType(int? typeCode) {
 }
 
 String getCompanyName(int? cmpCode) {
-  final partyType = defaultController.companies.firstWhere(
-      (pt) => pt.companyCode == cmpCode,
-      orElse: () => CompanyMst(
-        companyCode: cmpCode ?? 3,
-        companyName: 'Abhinandan Diamond',
-        address: '204 Shraddhajyot Building, Mahidharpura, Surat',
-        mobileno: '8926555111',
-      ));
-  return partyType.companyName ?? 'Abhinandan Diamond';
+  // firstWhereOrNull: the company list can still be empty (e.g. right after a
+  // page refresh) or the saved code may not exist - don't throw "No element".
+  if (cmpCode == null || cmpCode == 0) return 'No company selected';
+  final company = defaultController.companies.firstWhereOrNull(
+    (pt) => pt.companyCode == cmpCode,
+  );
+  // List not loaded yet (e.g. right after refresh) - show nothing, no fake name.
+  return company?.companyName ?? '';
 }
 
 dynamic getTotalWeight(String? invNo) {
-  final partyType = defaultController.purchaseDataList.firstWhere(
+  final purchase = defaultController.purchaseDataList.firstWhereOrNull(
     (pt) => pt.invoiceNo == invNo,
   );
-  return partyType.tWeight ?? 'Unknown';
+  return purchase?.tWeight ?? 'Unknown';
 }
 
 CompanyMst getCompanyDetails(int? cmpCode) {
-  final partyType = defaultController.companies.firstWhere(
-      (pt) => pt.companyCode == cmpCode,
-      orElse: () => CompanyMst(
-        companyCode: cmpCode ?? 3,
-        companyName: 'Abhinandan Diamond',
-        address: '204 Shraddhajyot Building, Mahidharpura, Surat',
-        mobileno: '8926555111',
-        emailID: 'contact@abhinandandiamond.com',
-      ));
-  return partyType;
+  // Fall back to an empty company (code only) instead of throwing when the
+  // company list is not loaded yet or the code is unknown.
+  return defaultController.companies.firstWhereOrNull(
+        (pt) => pt.companyCode == cmpCode,
+      ) ??
+      CompanyMst(companyCode: cmpCode);
 }
 
 Future<String?> getUsername() async {

@@ -20,14 +20,7 @@ void main() {
     Get.put(TabControllerX());
     final defaultController = Get.put(DefaultController());
     defaultController.companyCode.value = 3;
-    defaultController.companies.value = [
-      CompanyMst(
-        companyCode: 3,
-        companyName: 'Abhinandan Diamond - Surat',
-        mobileno: '8926555111',
-        address: '204 Shraddhajyot Building, Surat',
-      ),
-    ];
+    defaultController.companies.value = [];
   });
 
   tearDown(() {
@@ -51,7 +44,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Verify Brand Header
-    expect(find.text('Abhinandan'), findsOneWidget);
+    expect(find.text('Shakti'), findsOneWidget);
     expect(find.text('D I A M O N D'), findsOneWidget);
 
     // Verify Category Headers

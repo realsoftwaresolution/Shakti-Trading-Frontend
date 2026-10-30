@@ -35,14 +35,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     // Verify Brand Headers
-    expect(find.text('Abhinandan'), findsWidgets);
+    expect(find.text('Shakti'), findsWidgets);
     expect(find.text('D I A M O N D'), findsWidgets);
     expect(find.text('ERP System'), findsWidgets);
     expect(find.text('Realsoft Solutions'), findsWidgets);
     expect(find.text('Software For Your Business'), findsWidgets);
     expect(find.text('Presents'), findsWidgets);
 
-    // Verify Custom Left-Panel Features for Abhinandan Diamond ERP
+    // Verify Custom Left-Panel Features for Shakti Diamond ERP
     expect(find.text('Streamline Operations'), findsOneWidget);
     expect(find.text('Increase Efficiency'), findsOneWidget);
     expect(find.text('Secure & Reliable'), findsOneWidget);
@@ -52,7 +52,7 @@ void main() {
     expect(find.text('Username'), findsOneWidget);
     expect(find.text('Password'), findsOneWidget);
     expect(find.text('Sign In'), findsOneWidget);
-    expect(find.text('For Abhinandan Diamond'), findsOneWidget);
+    expect(find.text('For Shakti Diamond'), findsOneWidget);
   });
 
   testWidgets('LoginDialog renders clean compact view on mobile screens', (WidgetTester tester) async {
@@ -73,7 +73,7 @@ void main() {
 
     // Verify compact view displays primary sign-in form and brand header
     expect(find.text('Realsoft Solutions'), findsOneWidget);
-    expect(find.text('Abhinandan'), findsOneWidget);
+    expect(find.text('Shakti'), findsOneWidget);
     expect(find.text('Sign In'), findsOneWidget);
     expect(find.text('Username'), findsOneWidget);
     expect(find.text('Password'), findsOneWidget);

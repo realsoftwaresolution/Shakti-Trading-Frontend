@@ -260,7 +260,7 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
       if (event is KeyDownEvent) {
         if (event.logicalKey == LogicalKeyboardKey.enter ||
             event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-          _memoNoFocus.requestFocus();
+          _invDateFocus.requestFocus();
           return KeyEventResult.handled;
         }
         if (event.logicalKey == LogicalKeyboardKey.space) {
@@ -527,6 +527,22 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
     }
   }
 
+  /// Shows the next Memo No (CompanyMst Prefix + running no + Suffix).
+  /// The server assigns the final number on save, so if another user saves
+  /// first the saved memo gets the following number.
+  Future<void> _loadNextMemoNo() async {
+    final String? next = await defaultController.getNextMemoIssueNo();
+    if (!mounted || _isFromEdit || !_isEnabled) return;
+    setState(() {
+      memoNoController.text = next ?? '';
+    });
+    if (next == null) {
+      infoDialog(
+          messageText:
+              'Could not get the next Memo No. It will be generated when you save.');
+    }
+  }
+
   void _recalculateDueDate() {
     final invDate = selectedInvDate ?? selectedDate ?? DateTime.now();
     final terms = int.tryParse(termsController.text.trim()) ?? 0;
@@ -550,7 +566,9 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
       termsController.text = '0';
       _recalculateDueDate();
       _initFromManager();
+      memoNoController.clear();
     });
+    _loadNextMemoNo();
 
     if (needFocus == null || needFocus) {
       Future.delayed(const Duration(milliseconds: 100), () {
@@ -586,7 +604,7 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
         if (isInvDate) {
           _termsFocus.requestFocus();
         } else {
-          _memoNoFocus.requestFocus();
+          _invDateFocus.requestFocus();
         }
       });
     }
@@ -1788,7 +1806,7 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
                     if (event is KeyDownEvent &&
                         (event.logicalKey == LogicalKeyboardKey.enter ||
                             event.logicalKey == LogicalKeyboardKey.numpadEnter)) {
-                      _memoNoFocus.requestFocus();
+                      _invDateFocus.requestFocus();
                       return KeyEventResult.handled;
                     }
                     return KeyEventResult.ignored;
@@ -1797,8 +1815,8 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
                     label: 'Date :',
                     controller: dateController,
                     focusNode: _dateFocus,
-                    nextFocusNode: _memoNoFocus,
-                    onFieldSubmitted: (_) => _memoNoFocus.requestFocus(),
+                    nextFocusNode: _invDateFocus,
+                    onFieldSubmitted: (_) => _invDateFocus.requestFocus(),
                     enabled: _isEnabled && !_isFromEdit,
                     readOnly: true,
                     prefixIcon: const Icon(Icons.calendar_today_rounded, size: 16),
@@ -1815,7 +1833,9 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
                   nextFocusNode: _invDateFocus,
                   onFieldSubmitted: (_) => _invDateFocus.requestFocus(),
                   enabled: _isEnabled,
-                  hintText: 'Memo No',
+                  // Auto-generated from Company master (Prefix + No + Suffix)
+                  readOnly: true,
+                  hintText: 'Auto',
                   prefixIcon: const Icon(Icons.receipt_long_rounded, size: 16),
                 );
 

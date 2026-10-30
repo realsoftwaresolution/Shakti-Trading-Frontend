@@ -134,13 +134,18 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
     selectedTypeBookParty = widget.selectedTypeBookParty ?? ''.obs;
 
     // Load master list
-    paymentDataGridSource.value = defaultController.paymentMstList;
+    paymentDataGridSource.value = List.of(defaultController.paymentMstList);
 
-    _listWorker = ever(defaultController.paymentMstList, (list) {
-      if (mounted) {
-        paymentDataGridSource.value = list;
-        setState(() {});
+    // Keep the search table in sync whenever the list is reloaded / changed
+    // (after add, edit, delete). Keeps the date filter if one is applied.
+    _listWorker = ever(defaultController.paymentMstList, (_) {
+      if (!mounted) return;
+      if (_isFiltered.value && fromDate != null && toDate != null) {
+        paymentDataGridSource.value = _filterByDate(defaultController.paymentMstList);
+      } else {
+        paymentDataGridSource.value = List.of(defaultController.paymentMstList);
       }
+      setState(() {});
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -420,14 +425,15 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
   Future<void> _selectPaymentById(int mstId) async {
     selectedPaymentMstID.value = mstId;
 
-    final PaymentMstModel selectedPaymentData = defaultController.paymentMstList.firstWhere(
+    final PaymentMstModel? selectedPaymentData = defaultController.paymentMstList.firstWhereOrNull(
       (e) => e.paymentMstID == mstId,
     );
+    if (selectedPaymentData == null) return;
 
-    editBookPartyCreditDebitDataGridSource.value = await defaultController.getBookPartyPaymentDetails(
-      selectedPaymentData.partyCode!,
-      mstId,
-    );
+    // editBookPartyCreditDebitDataGridSource.value = await defaultController.getBookPartyPaymentDetails(
+    //   selectedPaymentData.partyCode!,
+    //   mstId,
+    // );
 
     editAccountPartyCreditDebitDataGridSource.value = await defaultController.getAccPartyPaymentDetails(
       selectedPaymentData.accountCode!,
@@ -477,21 +483,26 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
   void _applyDateFilter() {
     if (fromDate != null && toDate != null) {
       _isFiltered.value = true;
-      filteredDataGridSource.value = defaultController.paymentMstList.where((payment) {
-        if (payment.paymentDate == null) return false;
-        final paymentDate = DateTime.parse(payment.paymentDate!);
-        return paymentDate.isAfter(fromDate!) &&
-            paymentDate.isBefore(toDate!.add(const Duration(days: 1)));
-      }).toList();
-      paymentDataGridSource.value = filteredDataGridSource;
+      filteredDataGridSource.value = _filterByDate(defaultController.paymentMstList);
+      paymentDataGridSource.value = List.of(filteredDataGridSource);
       _searchKeyBoardFocus.requestFocus();
     } else {
       infoDialog(messageText: 'Please select both From Date and To Date');
     }
   }
 
+  List<PaymentMstModel> _filterByDate(List<PaymentMstModel> list) {
+    return list.where((payment) {
+      if (payment.paymentDate == null) return false;
+      final paymentDate = DateTime.tryParse(payment.paymentDate!);
+      if (paymentDate == null) return false;
+      return paymentDate.isAfter(fromDate!) &&
+          paymentDate.isBefore(toDate!.add(const Duration(days: 1)));
+    }).toList();
+  }
+
   void _removeDateFilter() {
-    paymentDataGridSource.value = defaultController.paymentMstList;
+    paymentDataGridSource.value = List.of(defaultController.paymentMstList);
     toDateController.clear();
     fromDateController.clear();
     fromDate = null;
@@ -886,8 +897,9 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
           final int totalRows = paymentDataGridSource.length;
 
           if (event.logicalKey == LogicalKeyboardKey.enter && _dataGridController.selectedRow != null) {
-            final int id = _dataGridController.selectedRow!.getCells()[0].value;
-            _selectPaymentById(id);
+            final dynamic idVal = _dataGridController.selectedRow!.getCells()[0].value;
+            final int id = idVal is int ? idVal : int.tryParse('$idVal') ?? 0;
+            if (id > 0) _selectPaymentById(id);
           } else if (event.logicalKey == LogicalKeyboardKey.arrowDown && currentIndex < totalRows - 1) {
             _dataGridController.selectedIndex = currentIndex + 1;
             _dataGridController.scrollToRow(double.parse(_dataGridController.selectedIndex.toString()));
@@ -1033,9 +1045,11 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: Obx(
-                    () => AppDataGrid(
+                    () {
+                    final searchSource = PaymentDataGridSource(paymentDataGridSource);
+                    return AppDataGrid(
                       controller: _dataGridController,
-                      source: PaymentDataGridSource(paymentDataGridSource),
+                      source: searchSource,
                       columns: _buildSearchGridColumns(),
                       tableSummaryRows: [
                         GridTableSummaryRow(
@@ -1060,13 +1074,21 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
                       selectionMode: SelectionMode.single,
                       columnWidthMode: ColumnWidthMode.auto,
                       frozenColumnsCount: 1,
-                      onSelectionChanged: (addedRows, removedRows) {
-                        if (addedRows.isNotEmpty) {
-                          final int id = addedRows.first.getCells()[0].value;
-                          _selectPaymentById(id);
-                        }
+                      // Single click only selects the row; double click (or Enter)
+                      // opens it in the form - same as the other screens. Opening
+                      // on selection change failed when the same row was clicked
+                      // again, because its selection did not change.
+                      onCellDoubleTap: (details) {
+                        if (details.rowColumnIndex.rowIndex <= 0) return; // header
+                        final int dataRowIndex = details.rowColumnIndex.rowIndex - 1;
+                        final rows = searchSource.effectiveRows; // sorted/filtered order
+                        if (dataRowIndex < 0 || dataRowIndex >= rows.length) return;
+                        final dynamic idVal = rows[dataRowIndex].getCells()[0].value;
+                        final int id = idVal is int ? idVal : int.tryParse('$idVal') ?? 0;
+                        if (id > 0) _selectPaymentById(id);
                       },
-                    ),
+                    );
+                    },
                   ),
                 ),
               ),
@@ -1087,10 +1109,6 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Top Toolbar & Mode Badge
-            _buildTopToolbar(),
-            const SizedBox(height: 12),
-
             // Card 1: Master Voucher Details (MST ID, Date, Cheque No, Book Party, Account Party)
             _buildVoucherDetailsCard(),
             const SizedBox(height: 12),
@@ -1250,7 +1268,10 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
             const SizedBox(height: 12),
             LayoutBuilder(
               builder: (context, constraints) {
-                final isCompact = constraints.maxWidth < 650;
+                // Must match the layout below: MST ID only takes full width in the
+                // stacked (< 500px) layout. Between 500-750px it sits in a Row,
+                // where an infinite width crashes layout ("RenderBox was not laid out").
+                final isCompact = constraints.maxWidth < 500;
                 final mstField = SizedBox(
                   width: isCompact ? double.infinity : 130,
                   child: AppTextField(
@@ -1563,16 +1584,16 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
         return Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(child: _buildBookPartyOutstandingCard()),
-            const SizedBox(width: 12),
+            // Expanded(child: _buildBookPartyOutstandingCard()),
+            // const SizedBox(width: 12),
             Expanded(child: _buildAccountPartyOutstandingCard()),
           ],
         );
       } else {
         return Column(
           children: [
-            _buildBookPartyOutstandingCard(),
-            const SizedBox(height: 12),
+            // _buildBookPartyOutstandingCard(),
+            // const SizedBox(height: 12),
             _buildAccountPartyOutstandingCard(),
           ],
         );
@@ -1718,7 +1739,7 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
 
             // DataGrid
             SizedBox(
-              height: 180,
+              height: 300,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(6),
                 child: Obx(
@@ -1941,6 +1962,7 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
         columnName: 'Out AmtRs',
         allowEditing: false,
         label: _buildGridHeader('Out AmtRs'),
+        width: 150
       ),
       GridColumn(
         columnName: 'Trn Type',
@@ -1965,6 +1987,7 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
       GridColumn(
         columnName: 'Amt Rs',
         allowEditing: false,
+        width: 150,
         label: _buildGridHeader('Amt Rs'),
       ),
     ];
