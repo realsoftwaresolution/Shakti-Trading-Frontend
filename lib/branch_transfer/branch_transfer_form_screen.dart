@@ -31,6 +31,15 @@ class BranchTransferFormScreen extends StatefulWidget {
 }
 
 class BranchTransferFormScreenState extends State<BranchTransferFormScreen> {
+  /// Add / Edit / Delete rights of this screen (from the user's menu rights)
+  ScreenRights get _rights => defaultController.screenRights(const [
+        'frmbranchtransferform',
+        'frmbranchtransfer',
+        'frmstockissueform',
+        'frmstockissue',
+        'branch transfer',
+        'stock issue',
+      ]);
   final DefaultController defaultController = Get.find<DefaultController>();
   final TabControllerX _tabController = Get.isRegistered<TabControllerX>()
       ? Get.find<TabControllerX>()
@@ -492,6 +501,10 @@ class BranchTransferFormScreenState extends State<BranchTransferFormScreen> {
 
   /// Action button: Add entry
   void _enableFields({bool needFocus = true}) {
+    if (!_rights.canAdd) {
+      infoDialog(messageText: 'You do not have permission to add a new entry here.');
+      return;
+    }
     final hasBranch = defaultController.effectiveBranchCode > 0;
     final isDesiCode4 = defaultController.effectiveDesiCode == 4;
     if (!hasBranch || !isDesiCode4) {
@@ -612,6 +625,7 @@ class BranchTransferFormScreenState extends State<BranchTransferFormScreen> {
       combinedList = await defaultController.getBranchTransferCombinedData(
         companyCodeParam: transfer.companyCode,
         fromUserId: transfer.fromCrId,
+        excludeId: id,
       );
     }
 
@@ -713,6 +727,10 @@ class BranchTransferFormScreenState extends State<BranchTransferFormScreen> {
 
   /// Action button: Delete entry via DELETE /branch-transfer/<ID>
   Future<void> _handleDelete() async {
+    if (!_rights.canDelete) {
+      infoDialog(messageText: 'You do not have permission to delete here.');
+      return;
+    }
     final idStr = _idController.text.trim();
     if (!_isFromEdit || idStr.isEmpty) return;
 
@@ -735,6 +753,10 @@ class BranchTransferFormScreenState extends State<BranchTransferFormScreen> {
 
   /// Action button: Save entry
   Future<void> _handleSave() async {
+    if (!_rights.canSave(_isFromEdit)) {
+      infoDialog(messageText: 'You do not have permission to save this entry.');
+      return;
+    }
     if (!_isEnabled) return;
 
     // Collect candidate items for saving (items where issueWt > 0, or selected items)

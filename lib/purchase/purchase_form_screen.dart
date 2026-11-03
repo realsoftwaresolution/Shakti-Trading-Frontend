@@ -28,6 +28,11 @@ class PurchaseFormScreen extends StatefulWidget {
 }
 
 class PurchaseFormScreenState extends State<PurchaseFormScreen> {
+  /// Add / Edit / Delete rights of this screen (from the user's menu rights)
+  ScreenRights get _rights => defaultController.screenRights(const [
+        'frmroughpurchaseform',
+        'rough purchase',
+      ]);
   // ==================== MASTER HEADER CONTROLLERS ====================
   final TextEditingController idController = TextEditingController();
   final TextEditingController crIdController = TextEditingController();
@@ -345,8 +350,27 @@ class PurchaseFormScreenState extends State<PurchaseFormScreen> {
     final double wt = double.tryParse(wtController.text) ?? 0.0;
     final double rateRs = double.tryParse(rateRsController.text) ?? 0.0;
     final double rateDollar = double.tryParse(rateDollarController.text) ?? 0.0;
-    amountRsController.text = (wt * rateRs > 0) ? (wt * rateRs).toStringAsFixed(2) : '0.00';
-    amountDollarController.text = (wt * rateDollar > 0) ? (wt * rateDollar).toStringAsFixed(2) : '0.00';
+    final amts = _itemAmounts(wt, rateRs, rateDollar);
+    amountRsController.text = amts[0] > 0 ? amts[0].toStringAsFixed(2) : '0.00';
+    amountDollarController.text = amts[1] > 0 ? amts[1].toStringAsFixed(2) : '0.00';
+  }
+
+  /// [amount Rs, amount $] of an item. The rate of the other currency is shown
+  /// rounded to 2 decimals, so its amount is worked out from the exact amount
+  /// of the entry currency (before: 100 ct x ₹1000 at 71 = $1408.00 instead of
+  /// $1408.45).
+  List<double> _itemAmounts(double wt, double rateRs, double rateDollar) {
+    final double exchange = double.tryParse(dollarRateController.text) ?? 0.0;
+    double amtRs = wt * rateRs;
+    double amtD = wt * rateDollar;
+    if (exchange > 0) {
+      if (_selectedCurrency.value == 'USD') {
+        if (amtD > 0) amtRs = amtD * exchange;
+      } else {
+        if (amtRs > 0) amtD = amtRs / exchange;
+      }
+    }
+    return [amtRs, amtD];
   }
 
   void _clearEntryInputs() {
@@ -403,7 +427,7 @@ class PurchaseFormScreenState extends State<PurchaseFormScreen> {
           }
           final double rateD = rateR / exchangeRate;
           final double amtR = wt * rateR;
-          final double amtD = wt * rateD;
+          final double amtD = amtR / exchangeRate; // exact, not from the rounded $ rate
 
           entry['rateRs'] = rateR.toStringAsFixed(2);
           entry['amtRs'] = amtR.toStringAsFixed(2);
@@ -608,6 +632,10 @@ class PurchaseFormScreenState extends State<PurchaseFormScreen> {
   DateTime? selectedSiteDate;
 
   void _enableFields({bool needFocus = true}) {
+    if (!_rights.canAdd) {
+      infoDialog(messageText: 'You do not have permission to add a new entry here.');
+      return;
+    }
     if (_isFromEdit) {
       _handleCancel();
     }
@@ -807,8 +835,9 @@ class PurchaseFormScreenState extends State<PurchaseFormScreen> {
       return;
     }
 
-    final double amtRs = wt * rateRs;
-    final double amtDollar = wt * rateDollar;
+    final amts = _itemAmounts(wt, rateRs, rateDollar);
+    final double amtRs = amts[0];
+    final double amtDollar = amts[1];
 
     final entryData = {
       if (selectedRoughId.value.isNotEmpty) 'id': selectedRoughId.value,
@@ -844,6 +873,10 @@ class PurchaseFormScreenState extends State<PurchaseFormScreen> {
   }
 
   Future<void> _handleSave() async {
+    if (!_rights.canSave(_isFromEdit)) {
+      infoDialog(messageText: 'You do not have permission to save this entry.');
+      return;
+    }
     if (!_isEnabled) return;
     if (crIdController.text.trim().isEmpty) {
       infoDialog(
@@ -1153,6 +1186,10 @@ class PurchaseFormScreenState extends State<PurchaseFormScreen> {
   }
 
   Future<void> _handleDelete() async {
+    if (!_rights.canDelete) {
+      infoDialog(messageText: 'You do not have permission to delete here.');
+      return;
+    }
     if (!_isFromEdit) return;
     final bool isSuccess = await defaultController.deletePurchaseData(
       id: selectedRoughPurMstID.value,
@@ -2672,23 +2709,9 @@ class PurchaseFormScreenState extends State<PurchaseFormScreen> {
                                     infoDialog(messageText: 'Cannot delete the only rough entry in edit mode.');
                                     return;
                                   }
-                                  final idVal = entries[i]['id'];
-                                  if (idVal != null && idVal.toString().isNotEmpty) {
-                                    defaultController.deletePurchaseRoughData(
-                                      id: int.parse(idVal.toString()),
-                                    ).then((_) {
-                                      setState(() {
-                                        if (_editingEntryIndex == i) {
-                                          _clearEntryInputs();
-                                        } else if (_editingEntryIndex != null && _editingEntryIndex! > i) {
-                                          _editingEntryIndex = _editingEntryIndex! - 1;
-                                        }
-                                        entries.removeAt(i);
-                                      });
-                                      _updateCalculations();
-                                    });
-                                    return;
-                                  }
+                                  // Only removed from the list here; the item is
+                                  // deleted in the database when the purchase is
+                                  // saved (all together), so Cancel keeps it.
                                 }
                                 setState(() {
                                   if (_editingEntryIndex == i) {

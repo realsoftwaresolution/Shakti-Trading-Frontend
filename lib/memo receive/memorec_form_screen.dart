@@ -32,6 +32,13 @@ class MemoRecFormScreen extends StatefulWidget {
 }
 
 class MemoRecFormScreenState extends State<MemoRecFormScreen> {
+  /// Add / Edit / Delete rights of this screen (from the user's menu rights)
+  ScreenRights get _rights => defaultController.screenRights(const [
+        'frmmemoreturnform',
+        'memo return',
+        'memo rec',
+        'memo receive',
+      ]);
   // Master Controllers
   final TextEditingController idController = TextEditingController();
   final TextEditingController dateController = TextEditingController();
@@ -216,11 +223,11 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
   void initState() {
     super.initState();
     _addListeners();
-    memoRecDataGridSource.value = defaultController.memoRecList;
+    memoRecDataGridSource.value = List.of(defaultController.memoRecList);
 
     _listWorker = ever(defaultController.memoRecList, (list) {
       if (mounted) {
-        memoRecDataGridSource.value = list;
+        memoRecDataGridSource.value = List.of(list);
         setState(() {});
       }
     });
@@ -579,7 +586,8 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
       final num amtRs = d.amountRs != null ? _toNum(d.amountRs) : carats * rateRs;
       final num rateD = _toNum(d.rateD);
       final num amtD = d.amountD != null ? _toNum(d.amountD) : carats * rateD;
-      final num penWt = _toNum(d.penCarats);
+      // Still out on memo = issued weight (each issued item is returned once)
+      final num penWt = carats;
 
       final cells = <String>[
         memoNo,
@@ -649,7 +657,8 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
       final double amtRs = (detail.amountRs ?? (carats * rateRs)).toDouble();
       final double rateD = (detail.rateD ?? 0.0).toDouble();
       final double amtD = (detail.amountD ?? (carats * rateD)).toDouble();
-      final double penCarats = (detail.penCarats ?? 0.0).toDouble();
+      // Pending = issued weight of this memo item (not the invoice stock)
+      final double penCarats = carats;
 
       pcsController.text = pcs.toString();
       wtController.text = carats.toStringAsFixed(3);
@@ -689,6 +698,10 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
   // ==================== FORM ACTIONS ====================
 
   void _enableFields([bool? needFocus]) {
+    if (!_rights.canAdd) {
+      infoDialog(messageText: 'You do not have permission to add a new entry here.');
+      return;
+    }
     setState(() {
       _isEnabled = true;
       _isFromEdit = false;
@@ -762,14 +775,13 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
       return;
     }
 
-    final double penWt = double.tryParse(penWtController.text.trim()) ?? 0.0;
-    final double issuedWt = double.tryParse(wtController.text.trim()) ?? 0.0;
-    final double maxAllowed = penWt > 0 ? penWt : issuedWt;
+    // Rec + Sale + Out + Loss can not be more than the weight issued on memo
+    final double maxAllowed = double.tryParse(wtController.text.trim()) ?? 0.0;
 
     if (maxAllowed > 0 && totalWt > (maxAllowed + 0.0001)) {
       infoDialog(
         messageText:
-            'Total return weight (${totalWt.toStringAsFixed(3)}) cannot be greater than pending/issued weight (${maxAllowed.toStringAsFixed(3)}).',
+            'Total return weight (${totalWt.toStringAsFixed(3)}) cannot be greater than issued weight (${maxAllowed.toStringAsFixed(3)}).',
       );
       _recWtFocus.requestFocus();
       return;
@@ -876,9 +888,9 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
         infoDialog(messageText: 'Cannot delete the only remaining return entry.');
         return;
       }
-      final detId = int.tryParse(entry['detId']?.toString() ?? '') ?? 0;
-      final id = int.tryParse(entry['id']?.toString() ?? '') ?? 0;
-      await defaultController.deleteMemoRecRoughData(detId: detId, id: id);
+      // Only removed from the list here. The return entry is deleted (and the
+      // issued item becomes pending again) when the receive is saved, so
+      // Cancel keeps it.
     }
 
     setState(() {
@@ -892,6 +904,10 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
   }
 
   Future<void> _handleSave() async {
+    if (!_rights.canSave(_isFromEdit)) {
+      infoDialog(messageText: 'You do not have permission to save this entry.');
+      return;
+    }
     if (!_isEnabled) return;
 
     if (recEntries.isEmpty) {
@@ -967,6 +983,10 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
   }
 
   Future<void> _handleDelete() async {
+    if (!_rights.canDelete) {
+      infoDialog(messageText: 'You do not have permission to delete here.');
+      return;
+    }
     if (!_isEnabled || !_isFromEdit) {
       infoDialog(messageText: 'Please select a memo return entry to delete.');
       return;
@@ -1093,7 +1113,7 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
         return invoiceDate.isAfter(fromDate!) &&
             invoiceDate.isBefore(toDate!.add(const Duration(days: 1)));
       }).toList();
-      memoRecDataGridSource.value = filteredDataGridSource;
+      memoRecDataGridSource.value = List.of(filteredDataGridSource);
       _searchKeyBoardFocus.requestFocus();
     } else {
       infoDialog(messageText: 'Please select both From Date and To Date');
@@ -1101,7 +1121,7 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
   }
 
   void _removeDateFilter() {
-    memoRecDataGridSource.value = defaultController.memoRecList;
+    memoRecDataGridSource.value = List.of(defaultController.memoRecList);
     toDateController.clear();
     fromDateController.clear();
     fromDate = null;
@@ -1555,13 +1575,11 @@ class MemoRecFormScreenState extends State<MemoRecFormScreen> {
                   nextFocusNode: _saleWtFocus,
                   onFieldSubmitted: (_) {
                     final double recWt = double.tryParse(recWtController.text.trim()) ?? 0.0;
-                    final double penWt = double.tryParse(penWtController.text.trim()) ?? 0.0;
-                    final double issuedWt = double.tryParse(wtController.text.trim()) ?? 0.0;
-                    final double maxAllowed = penWt > 0 ? penWt : issuedWt;
+                    final double maxAllowed = double.tryParse(wtController.text.trim()) ?? 0.0;
                     if (maxAllowed > 0 && recWt > (maxAllowed + 0.0001)) {
                       infoDialog(
                         messageText:
-                            'Rec Wt (${recWt.toStringAsFixed(3)}) cannot be greater than pending/issued weight (${maxAllowed.toStringAsFixed(3)}).',
+                            'Rec Wt (${recWt.toStringAsFixed(3)}) cannot be greater than issued weight (${maxAllowed.toStringAsFixed(3)}).',
                       );
                       _recWtFocus.requestFocus();
                       return;

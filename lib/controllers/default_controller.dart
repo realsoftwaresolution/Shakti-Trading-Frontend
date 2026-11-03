@@ -181,10 +181,36 @@ class DefaultController extends GetxController {
   RxBool canUserDelete = true.obs;
   RxInt currentLogId = 0.obs;
   RxString currentPcId = ''.obs;
+
+  /// PC / device name saved on records (PcID / PCID). Uses the PC id of the
+  /// logged-in user; 'WEB' when none is set. (Before: always "TESTFROMWEB".)
+  String get _savePcId =>
+      currentPcId.value.trim().isNotEmpty ? currentPcId.value.trim() : 'WEB';
   RxDouble userStockLimit = 0.0.obs;
   RxString userLoginTimeFrom = ''.obs;
   RxString userLoginTimeTo = ''.obs;
   RxMap<String, dynamic> userAccessMap = <String, dynamic>{}.obs;
+  /// Add / Edit / Delete rights per screen from login (`menuRights`):
+  /// [{MenuMstID, MenuName, FormName, CanAdd, CanEdit, CanDel}, ...]
+  /// Empty = no rights set up for this user (e.g. ADMIN) = all allowed.
+  RxList<Map<String, dynamic>> menuActionRights = <Map<String, dynamic>>[].obs;
+
+  /// Rights of one screen, found by its FormName / MenuName (lower case).
+  /// Also respects the user's general Edit / Delete flags (CrEdit / CrDel).
+  ScreenRights screenRights(List<String> names) {
+    final keys = names.map((e) => e.toLowerCase().trim()).toSet();
+    final row = menuActionRights.firstWhereOrNull((r) {
+      final form = (r['FormName'] ?? '').toString().toLowerCase().trim();
+      final name = (r['MenuName'] ?? '').toString().toLowerCase().trim();
+      return (form.isNotEmpty && keys.contains(form)) || (name.isNotEmpty && keys.contains(name));
+    });
+    bool yes(dynamic v) => v == true || v == 1 || v == '1' || v == 'Y' || v == 'true';
+    return ScreenRights(
+      canAdd: row == null || yes(row['CanAdd']),
+      canEdit: canUserEdit.value && (row == null || yes(row['CanEdit'])),
+      canDelete: canUserDelete.value && (row == null || yes(row['CanDel'])),
+    );
+  }
 
   bool get isAdmin =>
       currentUserGrp.value.trim().toUpperCase() == 'ADMIN' ||
@@ -471,6 +497,18 @@ class DefaultController extends GetxController {
       await prefs.remove('ua');
     }
 
+    // 9b. Add / Edit / Delete rights per screen
+    if (data['menuRights'] is List) {
+      menuActionRights.value = (data['menuRights'] as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      await prefs.setString('menuRights', jsonEncode(menuActionRights.toList()));
+    } else {
+      menuActionRights.clear();
+      await prefs.remove('menuRights');
+    }
+
     // 10. User's company from the login payload is only a suggestion for the
     // Company Selection dialog. The working company is set when the user
     // picks one there (companyCode), never automatically here.
@@ -515,6 +553,17 @@ class DefaultController extends GetxController {
           final decoded = jsonDecode(uaRaw);
           if (decoded is Map) {
             userAccessMap.value = Map<String, dynamic>.from(decoded);
+          }
+        } catch (_) {}
+      }
+
+      final String? rightsRaw = prefs.getString('menuRights');
+      if (rightsRaw != null && rightsRaw.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(rightsRaw);
+          if (decoded is List) {
+            menuActionRights.value =
+                decoded.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
           }
         } catch (_) {}
       }
@@ -568,6 +617,7 @@ class DefaultController extends GetxController {
     userLoginTimeFrom.value = '';
     userLoginTimeTo.value = '';
     userAccessMap.clear();
+    menuActionRights.clear();
     menuList.clear();
     companyCode.value = 0;
     loginCompanyCode.value = 0;
@@ -1179,6 +1229,54 @@ class DefaultController extends GetxController {
   }
 
 
+  /// The 2 party ledger rows of a Polish Purchase - same values as before.
+  /// They are now sent with the purchase and saved in the same server
+  /// transaction (the server links them to the purchase and its Invoice No).
+  List<Map<String, dynamic>> _polishPurchaseLedgerRows(PolishPurchaseModel header) {
+    final String? formattedInvDate = formatToIsoUtc(header.invoiceDate);
+    final dynamic formattedDueDate = (header.dueDate != null && header.dueDate.toString().isNotEmpty)
+        ? formatToIsoUtc(header.dueDate)
+        : formattedInvDate;
+
+    final dynamic invAmt = (header.finalAmtRs != null && header.finalAmtRs != 0 && header.finalAmtRs != 0.0)
+        ? header.finalAmtRs
+        : (header.netAmtRs != null && header.netAmtRs != 0 && header.netAmtRs != 0.0)
+            ? header.netAmtRs
+            : (header.totAmtRs ?? 0.0);
+
+    final String partyCodeStr = header.partyCode?.toString() ?? '';
+    final String companyPartyCodeStr = companyPartyCode.value.toString();
+
+    return List.generate(2, (index) {
+      return _creditDebitParams(
+        mstId: 0,
+        purMstId: 0,
+        saleMstId: 0,
+        invoiceDate: header.invoiceDate,
+        orgInvoiceDate: formattedInvDate,
+        paymentMstId: 0,
+        dueDate: formattedDueDate,
+        remarks1: ' ',
+        remarks2: ' ',
+        partyCode: index == 0 ? companyPartyCodeStr : partyCodeStr,
+        creditRs: index == 0 ? 0.00 : invAmt,
+        debitRs: index == 0 ? invAmt : 0.00,
+        invAmtRs: invAmt,
+        drCr: index == 0 ? 'DR' : 'CR',
+        formType: 'Purchase',
+        entryType: index == 0 ? 'NIL' : 'PARTY',
+        traType: index == 0 ? 'NIL' : 'PARTY',
+        formName: 'FrmPurchaseEntry',
+        perPartyCode: index == 0 ? partyCodeStr : companyPartyCodeStr,
+        orgCt: header.totWt ?? 0.0,
+        dueDays: header.dueDay ?? 0,
+        invoiceNo: header.invoiceNo ?? '',
+        srNo: index + 1,
+        brokerCode: header.brokerCode,
+      );
+    });
+  }
+
   Future<bool> addPolishPurchaseData({
     required PolishPurchaseModel header,
     required List<PolishPurchaseDetailModel> details,
@@ -1186,11 +1284,16 @@ class DefaultController extends GetxController {
     isLoading.value = true;
     try {
       header.companyCode = companyCode.value != 0 ? companyCode.value : header.companyCode;
+      // real user / PC instead of the model defaults (2 / '551776')
+      header.logId = currentUserId.value;
+      header.pcId = _savePcId;
       final masterPayload = header.toApiMasterJson();
       final detailsPayload = details.map((d) => d.toApiDetailJson(isUpdate: false)).toList();
       final body = {
         'master': masterPayload,
         'details': detailsPayload,
+        // saved in the same transaction as master + details
+        'ledger': _polishPurchaseLedgerRows(header),
       };
 
       final dio = ApiService.to.dio;
@@ -1210,62 +1313,17 @@ class DefaultController extends GetxController {
             respData['PolishPurMstID'] ??
             respData['id'] ??
             header.polishPurMstID;
-        final dynamic respInvoiceNo = respData['data']?['InvoiceNo'] ??
-            respData['InvoiceNo'] ??
-            header.invoiceNo;
         if (header.polishPurMstID == null && mstId != null) {
           header.polishPurMstID = int.tryParse(mstId.toString());
         }
 
-        final String? formattedInvDate = formatToIsoUtc(header.invoiceDate);
-        final dynamic formattedDueDate = (header.dueDate != null && header.dueDate.toString().isNotEmpty)
-            ? formatToIsoUtc(header.dueDate)
-            : formattedInvDate;
-
-        final dynamic invAmt = (header.finalAmtRs != null && header.finalAmtRs != 0 && header.finalAmtRs != 0.0)
-            ? header.finalAmtRs
-            : (header.netAmtRs != null && header.netAmtRs != 0 && header.netAmtRs != 0.0)
-                ? header.netAmtRs
-                : (header.totAmtRs ?? 0.0);
-
-        final String partyCodeStr = header.partyCode?.toString() ?? '';
-        final String companyPartyCodeStr = companyPartyCode.value.toString();
-
-        Future.wait(List.generate(2, (index) {
-          return addCreditDebitData(
-            mstId: mstId,
-            purMstId: mstId,
-            saleMstId: 0,
-            invoiceDate: header.invoiceDate,
-            orgInvoiceDate: formattedInvDate,
-            paymentMstId: 0,
-            dueDate: formattedDueDate,
-            remarks1: ' ',
-            remarks2: ' ',
-            partyCode: index == 0 ? companyPartyCodeStr : partyCodeStr,
-            creditRs: index == 0 ? 0.00 : invAmt,
-            debitRs: index == 0 ? invAmt : 0.00,
-            invAmtRs: invAmt,
-            drCr: index == 0 ? 'DR' : 'CR',
-            formType: 'Purchase',
-            entryType: index == 0 ? 'NIL' : 'PARTY',
-            traType: index == 0 ? 'NIL' : 'PARTY',
-            formName: 'FrmPurchaseEntry',
-            perPartyCode: index == 0 ? partyCodeStr : companyPartyCodeStr,
-            orgCt: header.totWt ?? 0.0,
-            dueDays: header.dueDay ?? 0,
-            invoiceNo: respInvoiceNo,
-            srNo: index + 1,
-            brokerCode: header.brokerCode,
-          );
-        }));
 
         polishPurchaseList.refresh();
         polishPurchaseDetailList.refresh();
         await getPolishPurchaseData(force: true);
         await getCreditDebitData(force: true);
-        await getOutstandingPurchaseSaleDetails();
-        await getPendingPaymentData();
+        await getOutstandingPurchaseSaleDetails(force: true);
+        await getPendingPaymentData(force: true);
         isLoading.value = false;
         await successDialog(
           messageText: 'Polish Purchase saved successfully',
@@ -1283,34 +1341,16 @@ class DefaultController extends GetxController {
       }
 
     } on DioException catch (dioErr) {
+      // Show the real error. (Before, a server error or no connection still
+      // showed "successfully" and only changed the list on this screen.)
       if (kDebugMode) log('addPolishPurchaseData DioException: ${dioErr.message}');
-      final statusCode = dioErr.response?.statusCode;
-      if (statusCode != null && statusCode >= 400 && statusCode < 500 && dioErr.response?.data is Map) {
-        isLoading.value = false;
-        final msg = (dioErr.response?.data as Map)['msg'] ?? dioErr.message ?? 'Server error';
-        await errorDialog(messageText: 'Failed to save Polish Purchase: $msg');
-        return false;
-      }
-
-      // Offline / test / gateway unavailable fallback
-      final nextId = (polishPurchaseList.isEmpty
-              ? 0
-              : polishPurchaseList.map((e) => e.polishPurMstID ?? 0).reduce((a, b) => a > b ? a : b)) +
-          1;
-      header.polishPurMstID = nextId;
-      _resolvePolishPurchaseNames(header);
-      polishPurchaseList.insert(0, header);
-      for (int i = 0; i < details.length; i++) {
-        details[i].polishPurMstID = nextId;
-        details[i].polishPurDetID = (polishPurchaseDetailList.isEmpty ? 0 : polishPurchaseDetailList.length) + i + 1;
-        _resolvePolishDetailNames(details[i]);
-        polishPurchaseDetailList.add(details[i]);
-      }
-      polishPurchaseList.refresh();
-      polishPurchaseDetailList.refresh();
       isLoading.value = false;
-      await successDialog(messageText: 'Polish Purchase saved successfully');
-      return true;
+      final data = dioErr.response?.data;
+      final msg = data is Map
+          ? (data['msg'] ?? data['message'] ?? dioErr.message ?? 'Server error')
+          : (dioErr.response == null ? 'Cannot reach the server' : (dioErr.message ?? 'Server error'));
+      await errorDialog(messageText: 'Failed to save Polish Purchase: $msg');
+      return false;
     } catch (e) {
       isLoading.value = false;
       await errorDialog(messageText: 'Failed to save Polish Purchase: $e');
@@ -1326,11 +1366,16 @@ class DefaultController extends GetxController {
     try {
       final int id = header.polishPurMstID ?? 0;
       header.companyCode = companyCode.value != 0 ? companyCode.value : header.companyCode;
+      // real user / PC instead of the model defaults (2 / '551776')
+      header.logId = currentUserId.value;
+      header.pcId = _savePcId;
       final masterPayload = header.toApiMasterJson();
       final detailsPayload = details.map((d) => d.toApiDetailJson(isUpdate: true)).toList();
       final body = {
         'master': masterPayload,
         'details': detailsPayload,
+        // saved in the same transaction as master + details
+        'ledger': _polishPurchaseLedgerRows(header),
       };
 
       final dio = ApiService.to.dio;
@@ -1345,65 +1390,14 @@ class DefaultController extends GetxController {
       if (response.statusCode == 200 &&
           respData is Map &&
           respData['success'] == true) {
-        final dynamic mstId = respData['data']?['PolishPurMstID'] ??
-            respData['data']?['id'] ??
-            respData['PolishPurMstID'] ??
-            respData['id'] ??
-            header.polishPurMstID ??
-            id;
-        final dynamic respInvoiceNo = respData['data']?['InvoiceNo'] ??
-            respData['InvoiceNo'] ??
-            header.invoiceNo;
 
-        final String? formattedInvDate = formatToIsoUtc(header.invoiceDate);
-        final dynamic formattedDueDate = (header.dueDate != null && header.dueDate.toString().isNotEmpty)
-            ? formatToIsoUtc(header.dueDate)
-            : formattedInvDate;
-
-        final dynamic invAmt = (header.finalAmtRs != null && header.finalAmtRs != 0 && header.finalAmtRs != 0.0)
-            ? header.finalAmtRs
-            : (header.netAmtRs != null && header.netAmtRs != 0 && header.netAmtRs != 0.0)
-                ? header.netAmtRs
-                : (header.totAmtRs ?? 0.0);
-
-        final String partyCodeStr = header.partyCode?.toString() ?? '';
-        final String companyPartyCodeStr = companyPartyCode.value.toString();
-
-        Future.wait(List.generate(2, (index) {
-          return addCreditDebitData(
-            mstId: mstId,
-            purMstId: mstId,
-            saleMstId: 0,
-            invoiceDate: header.invoiceDate,
-            orgInvoiceDate: formattedInvDate,
-            paymentMstId: 0,
-            dueDate: formattedDueDate,
-            remarks1: ' ',
-            remarks2: ' ',
-            partyCode: index == 0 ? companyPartyCodeStr : partyCodeStr,
-            creditRs: index == 0 ? 0.00 : invAmt,
-            debitRs: index == 0 ? invAmt : 0.00,
-            invAmtRs: invAmt,
-            drCr: index == 0 ? 'DR' : 'CR',
-            formType: 'Purchase',
-            entryType: index == 0 ? 'NIL' : 'PARTY',
-            traType: index == 0 ? 'NIL' : 'PARTY',
-            formName: 'FrmPurchaseEntry',
-            perPartyCode: index == 0 ? partyCodeStr : companyPartyCodeStr,
-            orgCt: header.totWt ?? 0.0,
-            dueDays: header.dueDay ?? 0,
-            invoiceNo: respInvoiceNo,
-            srNo: index + 1,
-            brokerCode: header.brokerCode,
-          );
-        }));
 
         polishPurchaseList.refresh();
         polishPurchaseDetailList.refresh();
         await getPolishPurchaseData(force: true);
         await getCreditDebitData(force: true);
-        await getOutstandingPurchaseSaleDetails();
-        await getPendingPaymentData();
+        await getOutstandingPurchaseSaleDetails(force: true);
+        await getPendingPaymentData(force: true);
         isLoading.value = false;
         await successDialog(
           messageText: 'Polish Purchase updated successfully',
@@ -1421,31 +1415,16 @@ class DefaultController extends GetxController {
       }
 
     } on DioException catch (dioErr) {
+      // Show the real error. (Before, a server error or no connection still
+      // showed "successfully" and only changed the list on this screen.)
       if (kDebugMode) log('updatePolishPurchaseData DioException: ${dioErr.message}');
-      final statusCode = dioErr.response?.statusCode;
-      if (statusCode != null && statusCode >= 400 && statusCode < 500 && dioErr.response?.data is Map) {
-        isLoading.value = false;
-        final msg = (dioErr.response?.data as Map)['msg'] ?? dioErr.message ?? 'Server error';
-        await errorDialog(messageText: 'Failed to update Polish Purchase: $msg');
-        return false;
-      }
-
-      final index = polishPurchaseList.indexWhere((p) => p.polishPurMstID == header.polishPurMstID);
-      if (index != -1) {
-        polishPurchaseList[index] = header;
-      }
-      polishPurchaseDetailList.removeWhere((d) => d.polishPurMstID == header.polishPurMstID);
-      for (int i = 0; i < details.length; i++) {
-        details[i].polishPurMstID = header.polishPurMstID;
-        details[i].polishPurDetID = (polishPurchaseDetailList.isEmpty ? 0 : polishPurchaseDetailList.length) + i + 1;
-        _resolvePolishDetailNames(details[i]);
-        polishPurchaseDetailList.add(details[i]);
-      }
-      polishPurchaseList.refresh();
-      polishPurchaseDetailList.refresh();
       isLoading.value = false;
-      await successDialog(messageText: 'Polish Purchase updated successfully');
-      return true;
+      final data = dioErr.response?.data;
+      final msg = data is Map
+          ? (data['msg'] ?? data['message'] ?? dioErr.message ?? 'Server error')
+          : (dioErr.response == null ? 'Cannot reach the server' : (dioErr.message ?? 'Server error'));
+      await errorDialog(messageText: 'Failed to update Polish Purchase: $msg');
+      return false;
     } catch (e) {
       isLoading.value = false;
       await errorDialog(messageText: 'Failed to update Polish Purchase: $e');
@@ -1465,6 +1444,10 @@ class DefaultController extends GetxController {
         polishPurchaseList.refresh();
         polishPurchaseDetailList.refresh();
         await getPolishPurchaseData(force: true);
+        // its ledger rows are deleted on the server too
+        await getCreditDebitData(force: true);
+        await getOutstandingPurchaseSaleDetails(force: true);
+        await getPendingPaymentData(force: true);
         isDeleteLoading.value = false;
         await successDialog(messageText: 'Polish Purchase deleted successfully');
         return true;
@@ -1474,73 +1457,19 @@ class DefaultController extends GetxController {
         return false;
       }
     } on DioException catch (dioErr) {
+      // Show the real error. (Before, a server error or no connection still
+      // showed "successfully" and only changed the list on this screen.)
       if (kDebugMode) log('deletePolishPurchaseData DioException: ${dioErr.message}');
-      final statusCode = dioErr.response?.statusCode;
-      if (statusCode != null && statusCode >= 400 && statusCode < 500 && dioErr.response?.data is Map) {
-        isDeleteLoading.value = false;
-        final msg = (dioErr.response?.data as Map)['msg'] ?? dioErr.message ?? 'Server error';
-        await errorDialog(messageText: 'Failed to delete Polish Purchase: $msg');
-        return false;
-      }
-
-      polishPurchaseList.removeWhere((p) => p.polishPurMstID == id);
-      polishPurchaseDetailList.removeWhere((d) => d.polishPurMstID == id);
-      polishPurchaseList.refresh();
-      polishPurchaseDetailList.refresh();
       isDeleteLoading.value = false;
-      await successDialog(messageText: 'Polish Purchase deleted successfully');
-      return true;
+      final data = dioErr.response?.data;
+      final msg = data is Map
+          ? (data['msg'] ?? data['message'] ?? dioErr.message ?? 'Server error')
+          : (dioErr.response == null ? 'Cannot reach the server' : (dioErr.message ?? 'Server error'));
+      await errorDialog(messageText: 'Failed to delete Polish Purchase: $msg');
+      return false;
     } catch (e) {
       isDeleteLoading.value = false;
       await errorDialog(messageText: 'Failed to delete Polish Purchase: $e');
-      return false;
-    }
-  }
-
-  Future<bool> deletePolishPurchaseDetail(int detailId) async {
-    isDeleteLoading.value = true;
-    try {
-      final dio = ApiService.to.dio;
-      final response = await dio.delete(_resolvePolishPurUrl('detail/$detailId'));
-
-      final respData = response.data;
-      if (response.statusCode == 200 || response.statusCode == 204) {
-        if (respData is Map && respData['success'] == false) {
-          isDeleteLoading.value = false;
-          await errorDialog(
-            messageText: respData['msg']?.toString() ?? 'Failed to delete detail',
-          );
-          return false;
-        }
-
-        polishPurchaseDetailList.removeWhere((d) => d.polishPurDetID == detailId);
-        polishPurchaseDetailList.refresh();
-        await getPolishPurchaseData(force: true);
-        isDeleteLoading.value = false;
-        final String msg = (respData is Map && respData['msg'] != null)
-            ? respData['msg'].toString()
-            : 'Detail deleted successfully';
-        await successDialog(messageText: msg);
-        return true;
-      } else {
-        isDeleteLoading.value = false;
-        final String msg = (respData is Map && respData['msg'] != null)
-            ? respData['msg'].toString()
-            : 'Failed to delete detail: ${response.statusCode}';
-        await errorDialog(messageText: msg);
-        return false;
-      }
-    } on DioException catch (dioErr) {
-      if (kDebugMode) log('deletePolishPurchaseDetail DioException: ${dioErr.message}');
-      isDeleteLoading.value = false;
-      final msg = (dioErr.response?.data is Map)
-          ? ((dioErr.response!.data as Map)['msg'] ?? dioErr.message ?? 'Server error')
-          : (dioErr.message ?? 'Server error');
-      await errorDialog(messageText: 'Failed to delete detail: $msg');
-      return false;
-    } catch (e) {
-      isDeleteLoading.value = false;
-      await errorDialog(messageText: 'Failed to delete detail: $e');
       return false;
     }
   }
@@ -3494,6 +3423,7 @@ class DefaultController extends GetxController {
   Future<List<BranchTransferItemModel>> getBranchTransferCombinedData({
     int? companyCodeParam,
     dynamic fromUserId,
+    dynamic excludeId, // transfer being edited: its own rows stay in stock
     bool force = true,
   }) async {
     isLoadingBranchTransfer.value = true;
@@ -3514,9 +3444,11 @@ class DefaultController extends GetxController {
             : (currentUserId.value > 0 ? currentUserId.value : 56);
       }
 
+      final int? exclude = int.tryParse(excludeId?.toString() ?? '');
       final params = {
         'companyCode': compCode,
         'fromCrId': crId,
+        if (exclude != null && exclude > 0) 'excludeId': exclude,
       };
 
       log('Calling branch-transfer/combined with params: $params');
@@ -4309,6 +4241,7 @@ class DefaultController extends GetxController {
   Future<List<InternalStockTransferItemModel>> getInternalStockTransferCombinedData({
     int? companyCodeParam,
     dynamic fromUserId,
+    dynamic excludeId, // transfer being edited: its own rows stay in stock
     bool force = true,
   }) async {
     isLoadingInternalStockTransfer.value = true;
@@ -4329,9 +4262,11 @@ class DefaultController extends GetxController {
             : (currentUserId.value > 0 ? currentUserId.value : 56);
       }
 
+      final int? exclude = int.tryParse(excludeId?.toString() ?? '');
       final params = {
         'companyCode': compCode,
         'fromCrId': crId,
+        if (exclude != null && exclude > 0) 'excludeId': exclude,
       };
 
       log('Calling internal-stock-transfer/combined with params: $params');
@@ -5618,6 +5553,166 @@ class DefaultController extends GetxController {
     ]);
   }
 
+  /// Builds the whole Payment voucher for the single-save API:
+  /// master + ledger (CreditDebitMst) + book rows (PaymentDet) + account rows
+  /// (PaymentDetAcc). Row values are exactly the same as the old separate calls;
+  /// PaymentMstID is filled in by the server.
+  Map<String, dynamic> _paymentVoucherPayload({
+    required String sflag,
+    required DateTime paymentDate,
+    String? paymentDay,
+    String? chequeNo,
+    int? partyCode,
+    int? accountCode,
+    double? jAmtRs,
+    double? uAmtRs,
+    String? remarks1,
+    double? pAmtRs,
+    double? aAmtRs,
+    double? bookJAmtRs,
+    double? bookUAmtRs,
+    double? accJAmtRs,
+    double? accUAmtRs,
+    required List<dynamic> bookRows,
+    required List<dynamic> accountRows,
+  }) {
+    final master = <String, dynamic>{
+      "PaymentDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(paymentDate),
+      "PaymentDay": paymentDay,
+      "ChequeNo": chequeNo,
+      "PartyCode": partyCode,
+      "AccountCode": accountCode,
+      "RateType": 'RS',
+      "ExRate": 0.00,
+      "JAmtRs": jAmtRs,
+      "UAmtRs": uAmtRs,
+      "Remarks1": remarks1,
+      "PAmtRs": pAmtRs,
+      "AAmtRs": aAmtRs,
+      "Sflag": sflag,
+      "LogID": '${currentUserId.value}',
+      "PcID": _savePcId,
+      "Ever": 0,
+      "CompanyCode": companyCode.value,
+    };
+
+    final String today = DateFormat('yyyy-MM-dd').format(paymentDate);
+    bool hasAmount(dynamic row) => ((row.jAmtRs ?? 0) > 0) || ((row.uAmtRs ?? 0) > 0);
+
+    // "ON ACCOUNT" ledger row for one side of the voucher
+    Map<String, dynamic> onAccountRow(int? party, int? perParty, double? credit, double? debit) =>
+        _creditDebitParams(
+          mstId: 0,
+          purMstId: 0,
+          saleMstId: 0,
+          invoiceDate: paymentDate,
+          orgInvoiceDate: today,
+          paymentMstId: null,
+          dueDate: today,
+          remarks1: remarks1,
+          remarks2: ' ',
+          partyCode: party.toString(),
+          creditRs: credit,
+          debitRs: debit,
+          invAmtRs: 0.00,
+          drCr: ' ',
+          formType: 'PAYMENT',
+          entryType: 'PAYMENT',
+          traType: 'PAYMENT',
+          formName: 'FrmPayment',
+          perPartyCode: perParty.toString(),
+          orgCt: 0,
+          dueDays: 0,
+          invoiceNo: 'ON ACCOUNT',
+          srNo: 0,
+          brokerCode: 0,
+        );
+
+    // Ledger row for one invoice that is paid / adjusted
+    Map<String, dynamic> invoiceRow(dynamic value, int? party, int? perParty) => _creditDebitParams(
+          mstId: value.mstID,
+          purMstId: 0,
+          saleMstId: 0,
+          invoiceDate: paymentDate,
+          orgInvoiceDate: value.orgInvDate,
+          paymentMstId: null,
+          dueDate: value.dueDate,
+          remarks1: remarks1,
+          remarks2: ' ',
+          partyCode: party.toString(),
+          creditRs: value.jAmtRs,
+          debitRs: value.uAmtRs,
+          invAmtRs: value.amtRs,
+          drCr: value.drCr,
+          formType: value.trnType,
+          entryType: 'PAYMENT',
+          traType: value.traType,
+          formName: 'FrmPayment',
+          perPartyCode: perParty.toString(),
+          orgCt: value.orgCt,
+          dueDays: value.dueDays,
+          invoiceNo: value.invNo,
+          srNo: value.subRefID,
+          brokerCode: value.orgBrokerCode,
+        );
+
+    // PaymentDet / PaymentDetAcc row (same columns)
+    Map<String, dynamic> detailRow(dynamic value, int index, int? party) => <String, dynamic>{
+          "PartyCode": party,
+          "SubRefID": value.subRefID,
+          "SrNo": index + 1,
+          "TrnType": value.trnType,
+          "MstID": value.mstID,
+          "DueDate": value.dueDate,
+          "DrCr": value.drCr,
+          "AmtRs": value.amtRs,
+          "BAmtRs": value.bAmtRs,
+          "BRDrCr": value.bRDrCr,
+          "BDDrCr": value.bDDrCr,
+          "JAmtRs": value.jAmtRs,
+          "UAmtRs": value.uAmtRs,
+          "OAmtRs": value.oAmtRs,
+          "TraType": value.traType,
+          "OrgInvDate": value.orgInvDate,
+          "DueDays": value.dueDays,
+          "OrgRateType": 'RS',
+          "OrgBrokerCode": value.orgBrokerCode,
+          "OrgCt": value.orgCt,
+          "InvNo": value.invNo,
+        };
+
+    final ledger = <Map<String, dynamic>>[];
+    if ((bookJAmtRs ?? 0) > 0 || (bookUAmtRs ?? 0) > 0) {
+      ledger.add(onAccountRow(partyCode, accountCode, bookJAmtRs, bookUAmtRs));
+    }
+    ledger.addAll(bookRows.where(hasAmount).map((v) => invoiceRow(v, partyCode, accountCode)));
+    if ((accJAmtRs ?? 0) > 0 || (accUAmtRs ?? 0) > 0) {
+      ledger.add(onAccountRow(accountCode, partyCode, accJAmtRs, accUAmtRs));
+    }
+    ledger.addAll(accountRows.where(hasAmount).map((v) => invoiceRow(v, accountCode, partyCode)));
+
+    final det = <Map<String, dynamic>>[
+      for (int i = 0; i < bookRows.length; i++) detailRow(bookRows[i], i, partyCode),
+    ];
+    final detAcc = <Map<String, dynamic>>[
+      for (int i = 0; i < accountRows.length; i++) detailRow(accountRows[i], i, accountCode),
+    ];
+
+    return {'master': master, 'ledger': ledger, 'det': det, 'detAcc': detAcc};
+  }
+
+  /// Message from the API error response, if it sent one.
+  String _apiErrorMessage(Object error, String fallback) {
+    if (error is DioException) {
+      final data = error.response?.data;
+      if (data is Map && data['message'] != null) return data['message'].toString();
+      if (data is String && data.trim().isNotEmpty) return data;
+    }
+    return fallback;
+  }
+
+  /// Saves a new Payment voucher. Master, ledger and detail rows are saved in
+  /// ONE server transaction - either everything is saved or nothing is.
   Future<void> addPaymentData({
     DateTime? paymentDate,
     String? paymentDay,
@@ -5638,251 +5733,50 @@ class DefaultController extends GetxController {
   }) async {
     try {
       isLoading.value = true;
-      final dio = ApiService.to.dio;
-      var params = <String, dynamic>{
-        "PaymentDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(paymentDate!),
-        "PaymentDay": paymentDay,
-        "ChequeNo": chequeNo,
-        "PartyCode": partyCode,
-        "AccountCode": accountCode,
-        "RateType": 'RS',
-        "ExRate": 0.00,
-        "JAmtRs": jAmtRs,
-        // "JAmtDollar": Joi.number().precision(2),
-        "UAmtRs": uAmtRs,
-        // "UAmtDollar": Joi.number().precision(2),
-        "Remarks1": remarks1,
-        // "Remarks2":Joi.string(),
-        "PAmtRs": pAmtRs,
-        // "PAmtDollar": Joi.number().precision(2),
-        "AAmtRs": aAmtRs,
-        // "AAmtDollar": Joi.number().precision(2),
-        "Sflag": "I",
-        "LogID": "0",
-        "PcID": "TESTFROMWEB",
-        "Ever": 0,
-        "CompanyCode": companyCode.value,
-      };
-
-      final response = await dio.post(
-        '${baseUrl}rough-entry/payment-mst/add',
-        data: jsonEncode(params),
+      final payload = _paymentVoucherPayload(
+        sflag: 'I',
+        paymentDate: paymentDate!,
+        paymentDay: paymentDay,
+        chequeNo: chequeNo,
+        partyCode: partyCode,
+        accountCode: accountCode,
+        jAmtRs: jAmtRs,
+        uAmtRs: uAmtRs,
+        remarks1: remarks1,
+        pAmtRs: pAmtRs,
+        aAmtRs: aAmtRs,
+        bookJAmtRs: bookJAmtRs,
+        bookUAmtRs: bookUAmtRs,
+        accJAmtRs: accJAmtRs,
+        accUAmtRs: accUAmtRs,
+        bookRows: bookDataGridSource.toList(),
+        accountRows: accountDataGridSource.toList(),
       );
 
-      if (response.statusCode == 200) {
-        isLoading.value = false;
-        _upsertPaymentMst(response.data['data']);
-        // if (bookDataGridSource.isNotEmpty) {
-        if (bookJAmtRs! > 0 || bookUAmtRs! > 0) {
-          addCreditDebitData(
-            mstId: 0,
-            purMstId: 0,
-            saleMstId: 0,
-            invoiceDate: paymentDate,
-            orgInvoiceDate: DateFormat('yyyy-MM-dd').format(paymentDate),
-            paymentMstId: response.data['data']['PaymentMstID'],
-            dueDate: DateFormat('yyyy-MM-dd').format(paymentDate),
-            remarks1: remarks1,
-            remarks2: ' ',
-            partyCode: partyCode.toString(),
-            creditRs: bookJAmtRs,
-            debitRs: bookUAmtRs,
-            invAmtRs: 0.00,
-            drCr: ' ',
-            formType: 'PAYMENT',
-            entryType: 'PAYMENT',
-            traType: 'PAYMENT',
-            formName: 'FrmPayment',
-            perPartyCode: accountCode.toString(),
-            orgCt: 0,
-            dueDays: 0,
-            invoiceNo: 'ON ACCOUNT',
-            srNo: 0,
-            brokerCode: 0,
-          );
-        }
-        await Future.wait(
-          bookDataGridSource
-              .where((value) =>
-                  value.jAmtRs! > 0 || value.uAmtRs! > 0) // Filter entries
-              .map((value) => addCreditDebitData(
-                    mstId: value.mstID,
-                    purMstId: 0,
-                    saleMstId: 0,
-                    invoiceDate: paymentDate,
-                    orgInvoiceDate: value.orgInvDate,
-                    paymentMstId: response.data['data']['PaymentMstID'],
-                    dueDate: value.dueDate,
-                    remarks1: remarks1,
-                    remarks2: ' ',
-                    partyCode: partyCode.toString(),
-                    creditRs: value.jAmtRs,
-                    debitRs: value.uAmtRs,
-                    invAmtRs: value.amtRs,
-                    drCr: value.drCr,
-                    formType: value.trnType,
-                    entryType: 'PAYMENT',
-                    traType: value.traType,
-                    formName: 'FrmPayment',
-                    perPartyCode: accountCode.toString(),
-                    orgCt: value.orgCt,
-                    dueDays: value.dueDays,
-                    invoiceNo: value.invNo,
-                    srNo: value.subRefID,
-                    brokerCode: value.orgBrokerCode,
-                  )),
-        );
-        await Future.wait(bookDataGridSource.asMap().entries.map((entry) {
-          int index = entry.key; // index of the current entry
-          var value = entry.value;
-          // current entry data
-          return _addPaymentDetData(
-              paymentMstId: response.data['data']['PaymentMstID'],
-              partyCode: partyCode,
-              subRefId: value.subRefID,
-              // Need to Verify
-              trnType: value.trnType,
-              // Need To Verify
-              traType: value.traType,
-              srNo: index + 1,
-              mstId: value.mstID,
-              dueDays: value.dueDays,
-              dueDate: value.dueDate,
-              drCr: value.drCr,
-              bdDrCr: value.bDDrCr,
-              odDrCr: value.oDDrCr ?? ' ',
-              amtRs: value.amtRs,
-              bAmtRs: value.bAmtRs,
-              brDrCr: value.bRDrCr,
-              jAmtRs: value.jAmtRs,
-              uAmtRs: value.uAmtRs,
-              oAmtRs: value.oAmtRs,
-              orDrCr: value.oRDrCr ?? ' ',
-              orgInvDate: value.orgInvDate,
-              brokerCode: value.orgBrokerCode,
-              orgCt: value.orgCt,
-              invNo: value.invNo);
-        }));
+      final response = await ApiService.to.dio.post(
+        '${baseUrl}rough-entry/payment-mst/save',
+        data: jsonEncode(payload),
+      );
 
-        // if (accountDataGridSource.isNotEmpty) {
-        if (accJAmtRs! > 0 || accUAmtRs! > 0) {
-          addCreditDebitData(
-            mstId: 0,
-            purMstId: 0,
-            saleMstId: 0,
-            invoiceDate: paymentDate,
-            orgInvoiceDate: DateFormat('yyyy-MM-dd').format(paymentDate),
-            paymentMstId: response.data['data']['PaymentMstID'],
-            dueDate: DateFormat('yyyy-MM-dd').format(paymentDate),
-            remarks1: remarks1,
-            remarks2: ' ',
-            partyCode: accountCode.toString(),
-            creditRs: accJAmtRs,
-            debitRs: accUAmtRs,
-            invAmtRs: 0.00,
-            drCr: ' ',
-            formType: 'PAYMENT',
-            entryType: 'PAYMENT',
-            traType: 'PAYMENT',
-            formName: 'FrmPayment',
-            perPartyCode: partyCode.toString(),
-            orgCt: 0,
-            dueDays: 0,
-            invoiceNo: 'ON ACCOUNT',
-            srNo: 0,
-            brokerCode: 0,
-          );
-        }
-        await Future.wait(
-          accountDataGridSource
-              .where((value) =>
-                  value.jAmtRs! > 0 || value.uAmtRs! > 0) // Add filtering
-              .map((value) => addCreditDebitData(
-                    mstId: value.mstID,
-                    purMstId: 0,
-                    saleMstId: 0,
-                    invoiceDate: paymentDate,
-                    orgInvoiceDate: value.orgInvDate,
-                    paymentMstId: response.data['data']['PaymentMstID'],
-                    dueDate: value.dueDate,
-                    remarks1: remarks1,
-                    remarks2: ' ',
-                    partyCode: accountCode.toString(),
-                    creditRs: value.jAmtRs,
-                    debitRs: value.uAmtRs,
-                    invAmtRs: value.amtRs,
-                    drCr: value.drCr,
-                    formType: value.trnType,
-                    entryType: 'PAYMENT',
-                    traType: value.traType,
-                    formName: 'FrmPayment',
-                    perPartyCode: partyCode.toString(),
-                    orgCt: value.orgCt,
-                    dueDays: value.dueDays,
-                    invoiceNo: value.invNo,
-                    srNo: value.subRefID,
-                    brokerCode: value.orgBrokerCode,
-                  )),
-        );
-        await Future.wait(accountDataGridSource.asMap().entries.map((entry) {
-          int index = entry.key; // index of the current entry
-          var value = entry.value;
-          if (kDebugMode) {
-            print('WHILE CALLING API JAMT:${value.jAmtRs}');
-            print('WHILE CALLING API UAMT:${value.uAmtRs}');
-          }
-          // current entry data
-          return _addPaymentDetAccData(
-              paymentMstId: response.data['data']['PaymentMstID'],
-              partyCode: accountCode,
-              subRefId: value.subRefID,
-              // Need to Verify
-              trnType: value.trnType,
-              // Need To Verify
-              traType: value.traType,
-              srNo: index + 1,
-              mstId: value.mstID,
-              dueDays: value.dueDays,
-              dueDate: value.dueDate,
-              bdDrCr: value.bDDrCr,
-              odDrCr: value.oDDrCr ?? ' ',
-              drCr: value.drCr,
-              amtRs: value.amtRs,
-              bAmtRs: value.bAmtRs,
-              brDrCr: value.bRDrCr,
-              jAmtRs: value.jAmtRs,
-              uAmtRs: value.uAmtRs,
-              oAmtRs: value.oAmtRs,
-              orDrCr: value.oRDrCr ?? ' ',
-              orgInvDate: value.orgInvDate,
-              brokerCode: value.orgBrokerCode,
-              orgCt: value.orgCt,
-              invNo: value.invNo);
-        })).then(
-            (value) => successDialog(messageText: response.data['message']));
-        // }
-        // if (bookDataGridSource.isEmpty && accountDataGridSource.isEmpty) {
-        //
-        //   successDialog(messageText: response.data['message']);
-        // }
-        // Reload from the server (force) so the Payment search list and
-        // balances show the saved record - without force these returned early
-        // because the lists were already loaded.
+      isLoading.value = false;
+      if (response.statusCode == 200) {
+        _upsertPaymentMst(response.data['data']);
+        successDialog(messageText: response.data['message'] ?? 'Payment Saved Successfully');
         await _refreshPaymentLists();
-        /* } else {
-        isLoading.value = false;
+      } else {
         errorDialog(messageText: 'Failed to Add data: ${response.statusCode}');
-      }*/
       }
     } catch (error) {
       isLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred.');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred.'));
       if (kDebugMode) {
         log('$error addPaymentData');
       }
     }
   }
 
+  /// Updates a Payment voucher. The old ledger / detail rows are replaced in
+  /// the same server transaction, so a failed edit keeps the old voucher.
   Future<void> updatePaymentData({
     required int mstId,
     DateTime? paymentDate,
@@ -5904,418 +5798,44 @@ class DefaultController extends GetxController {
   }) async {
     try {
       isLoading.value = true;
-      await deletePaymentDetails(id: mstId);
-      final dio = ApiService.to.dio;
+      final payload = _paymentVoucherPayload(
+        sflag: 'U',
+        paymentDate: paymentDate!,
+        paymentDay: paymentDay,
+        chequeNo: chequeNo,
+        partyCode: partyCode,
+        accountCode: accountCode,
+        jAmtRs: jAmtRs,
+        uAmtRs: uAmtRs,
+        remarks1: remarks1,
+        pAmtRs: pAmtRs,
+        aAmtRs: aAmtRs,
+        bookJAmtRs: bookJAmtRs,
+        bookUAmtRs: bookUAmtRs,
+        accJAmtRs: accJAmtRs,
+        accUAmtRs: accUAmtRs,
+        bookRows: bookDataGridSource.toList(),
+        accountRows: accountDataGridSource.toList(),
+      );
 
-      var params = <String, dynamic>{
-        "PaymentDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(paymentDate!),
-        "PaymentDay": paymentDay,
-        "ChequeNo": chequeNo,
-        "PartyCode": partyCode,
-        "AccountCode": accountCode,
-        "RateType": 'RS',
-        "ExRate": 0.00,
-        "JAmtRs": jAmtRs,
-        // "JAmtDollar": Joi.number().precision(2),
-        "UAmtRs": uAmtRs,
-        // "UAmtDollar": Joi.number().precision(2),
-        "Remarks1": remarks1,
-        // "Remarks2":Joi.string(),
-        "PAmtRs": pAmtRs,
-        // "PAmtDollar": Joi.number().precision(2),
-        "AAmtRs": aAmtRs,
-        // "AAmtDollar": Joi.number().precision(2),
-        "Sflag": "U",
-        "LogID": "0",
-        "PcID": "TESTFROMWEB",
-        "Ever": 0,
-        "CompanyCode": companyCode.value,
-      };
+      final response = await ApiService.to.dio.put(
+        '${baseUrl}rough-entry/payment-mst/save/$mstId',
+        data: jsonEncode(payload),
+      );
 
-      final response = await dio.put('${baseUrl}rough-entry/payment-mst/$mstId',
-          data: jsonEncode(params));
-
-      // if (kDebugMode) {
-      //   print(response.data['data']);
-      // }
-
+      isLoading.value = false;
       if (response.statusCode == 200) {
-        isLoading.value = false;
         _upsertPaymentMst(response.data['data']);
-        // if (bookDataGridSource.isNotEmpty) {
-        if (bookJAmtRs! > 0 || bookUAmtRs! > 0) {
-          addCreditDebitData(
-            mstId: 0,
-            purMstId: 0,
-            saleMstId: 0,
-            invoiceDate: paymentDate,
-            orgInvoiceDate: DateFormat('yyyy-MM-dd').format(paymentDate),
-            paymentMstId: response.data['data']['PaymentMstID'],
-            dueDate: DateFormat('yyyy-MM-dd').format(paymentDate),
-            remarks1: remarks1,
-            remarks2: ' ',
-            partyCode: partyCode.toString(),
-            creditRs: bookJAmtRs,
-            debitRs: bookUAmtRs,
-            invAmtRs: 0.00,
-            drCr: ' ',
-            formType: 'PAYMENT',
-            entryType: 'PAYMENT',
-            traType: 'PAYMENT',
-            formName: 'FrmPayment',
-            perPartyCode: accountCode.toString(),
-            orgCt: 0,
-            dueDays: 0,
-            invoiceNo: 'ON ACCOUNT',
-            srNo: 0,
-            brokerCode: 0,
-          ).then((v) {
-            log('CREDIT DEBIT ENTRY FOR ${response.data['data']['PaymentMstID']}');
-          });
-        }
-        await Future.wait(
-          bookDataGridSource
-              .where((value) =>
-                  value.jAmtRs! > 0 || value.uAmtRs! > 0) // Filter entries
-              .map((value) => addCreditDebitData(
-                    mstId: value.mstID,
-                    purMstId: 0,
-                    saleMstId: 0,
-                    invoiceDate: paymentDate,
-                    orgInvoiceDate: value.orgInvDate,
-                    paymentMstId: response.data['data']['PaymentMstID'],
-                    dueDate: value.dueDate,
-                    remarks1: remarks1,
-                    remarks2: ' ',
-                    partyCode: partyCode.toString(),
-                    creditRs: value.jAmtRs,
-                    debitRs: value.uAmtRs,
-                    invAmtRs: value.amtRs,
-                    drCr: value.drCr,
-                    formType: value.trnType,
-                    entryType: 'PAYMENT',
-                    traType: value.traType,
-                    formName: 'FrmPayment',
-                    perPartyCode: accountCode.toString(),
-                    orgCt: value.orgCt,
-                    dueDays: value.dueDays,
-                    invoiceNo: value.invNo,
-                    srNo: value.subRefID,
-                    brokerCode: value.orgBrokerCode,
-                  )),
-        );
-        await Future.wait(bookDataGridSource.asMap().entries.map((entry) {
-          int index = entry.key; // index of the current entry
-          var value = entry.value;
-          // current entry data
-          return _addPaymentDetData(
-              paymentMstId: response.data['data']['PaymentMstID'],
-              partyCode: partyCode,
-              subRefId: value.subRefID,
-              // Need to Verify
-              trnType: value.trnType,
-              // Need To Verify
-              traType: value.traType,
-              srNo: index + 1,
-              mstId: value.mstID,
-              dueDays: value.dueDays,
-              dueDate: value.dueDate,
-              drCr: value.drCr,
-              bdDrCr: value.bDDrCr,
-              odDrCr: value.oDDrCr ?? ' ',
-              amtRs: value.amtRs,
-              bAmtRs: value.bAmtRs,
-              brDrCr: value.bRDrCr,
-              jAmtRs: value.jAmtRs,
-              uAmtRs: value.uAmtRs,
-              oAmtRs: value.oAmtRs,
-              orDrCr: value.oRDrCr ?? ' ',
-              orgInvDate: value.orgInvDate,
-              brokerCode: value.orgBrokerCode,
-              orgCt: value.orgCt,
-              invNo: value.invNo);
-        }));
-        // }
-        // if (accountDataGridSource.isNotEmpty) {
-        if (accJAmtRs! > 0 || accUAmtRs! > 0) {
-          addCreditDebitData(
-            mstId: 0,
-            purMstId: 0,
-            saleMstId: 0,
-            invoiceDate: paymentDate,
-            orgInvoiceDate: DateFormat('yyyy-MM-dd').format(paymentDate),
-            paymentMstId: response.data['data']['PaymentMstID'],
-            dueDate: DateFormat('yyyy-MM-dd').format(paymentDate),
-            remarks1: remarks1,
-            remarks2: ' ',
-            partyCode: accountCode.toString(),
-            creditRs: accJAmtRs,
-            debitRs: accUAmtRs,
-            invAmtRs: 0.00,
-            drCr: ' ',
-            formType: 'PAYMENT',
-            entryType: 'PAYMENT',
-            traType: 'PAYMENT',
-            formName: 'FrmPayment',
-            perPartyCode: partyCode.toString(),
-            orgCt: 0,
-            dueDays: 0,
-            invoiceNo: 'ON ACCOUNT',
-            srNo: 0,
-            brokerCode: 0,
-          );
-        }
-        await Future.wait(
-          accountDataGridSource
-              .where((value) =>
-                  value.jAmtRs! > 0 || value.uAmtRs! > 0) // Add filtering
-              .map((value) => addCreditDebitData(
-                    mstId: value.mstID,
-                    purMstId: 0,
-                    saleMstId: 0,
-                    invoiceDate: paymentDate,
-                    orgInvoiceDate: value.orgInvDate,
-                    paymentMstId: response.data['data']['PaymentMstID'],
-                    dueDate: value.dueDate,
-                    remarks1: remarks1,
-                    remarks2: ' ',
-                    partyCode: accountCode.toString(),
-                    creditRs: value.jAmtRs,
-                    debitRs: value.uAmtRs,
-                    invAmtRs: value.amtRs,
-                    drCr: value.drCr,
-                    formType: value.trnType,
-                    entryType: 'PAYMENT',
-                    traType: value.traType,
-                    formName: 'FrmPayment',
-                    perPartyCode: partyCode.toString(),
-                    orgCt: value.orgCt,
-                    dueDays: value.dueDays,
-                    invoiceNo: value.invNo,
-                    srNo: value.subRefID,
-                    brokerCode: value.orgBrokerCode,
-                  )),
-        );
-        await Future.wait(accountDataGridSource.asMap().entries.map((entry) {
-          int index = entry.key; // index of the current entry
-          var value = entry.value;
-          // current entry data
-          return _addPaymentDetAccData(
-              paymentMstId: response.data['data']['PaymentMstID'],
-              partyCode: accountCode,
-              subRefId: value.subRefID,
-              // Need to Verify
-              trnType: value.trnType,
-              // Need To Verify
-              traType: value.traType,
-              srNo: index + 1,
-              mstId: value.mstID,
-              dueDays: value.dueDays,
-              dueDate: value.dueDate,
-              bdDrCr: value.bDDrCr,
-              odDrCr: value.oDDrCr ?? ' ',
-              drCr: value.drCr,
-              amtRs: value.amtRs,
-              bAmtRs: value.bAmtRs,
-              brDrCr: value.bRDrCr,
-              jAmtRs: value.jAmtRs,
-              uAmtRs: value.uAmtRs,
-              oAmtRs: value.oAmtRs,
-              orDrCr: value.oRDrCr ?? ' ',
-              orgInvDate: value.orgInvDate,
-              brokerCode: value.orgBrokerCode,
-              orgCt: value.orgCt,
-              invNo: value.invNo);
-        })).then(
-            (value) => successDialog(messageText: response.data['message']));
-        // }
-        // if (bookDataGridSource.isEmpty && accountDataGridSource.isEmpty) {
-        //   successDialog(messageText: response.data['message']);
-        // }
-        // Reload from the server (force) so the Payment search list and
-        // balances show the saved record - without force these returned early
-        // because the lists were already loaded.
+        successDialog(messageText: response.data['message'] ?? 'Payment Updated Successfully');
         await _refreshPaymentLists();
       } else {
-        isLoading.value = false;
-        errorDialog(messageText: 'Failed to Add data: ${response.statusCode}');
+        errorDialog(messageText: 'Failed to Update data: ${response.statusCode}');
       }
     } catch (error) {
       isLoading.value = false;
-
-      errorDialog(messageText: 'An unexpected error occurred.');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred.'));
       if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> _addPaymentDetData(
-      {paymentMstId,
-      partyCode,
-      subRefId,
-      srNo,
-      trnType,
-      mstId,
-      dueDate,
-      drCr,
-      amtRs,
-      bAmtRs,
-      brDrCr,
-      jAmtRs,
-      uAmtRs,
-      oAmtRs,
-      orDrCr,
-      bdDrCr,
-      odDrCr,
-      traType,
-      orgInvDate,
-      dueDays,
-      brokerCode,
-      orgCt,
-      invNo}) async {
-    try {
-      isLoading.value = true;
-      final dio = ApiService.to.dio;
-      var params = <String, dynamic>{
-        "PaymentMstID": paymentMstId,
-        "PartyCode": partyCode,
-        "SubRefID": subRefId,
-        "SrNo": srNo,
-        "TrnType": trnType,
-        "MstID": mstId,
-        "DueDate": dueDate,
-        "DrCr": drCr,
-        "AmtRs": amtRs,
-        // "AmtDollar": Joi.number().precision(2),
-        "BAmtRs": bAmtRs,
-        // "BAmtDollar": Joi.number().precision(2),
-        "BRDrCr": brDrCr,
-        "BDDrCr": bdDrCr,
-        "JAmtRs": jAmtRs,
-        // "JAmtDollar": Joi.number().precision(2),
-        "UAmtRs": uAmtRs,
-        // "UAmtDollar": Joi.number().precision(2),
-        "OAmtRs": oAmtRs,
-        // "OAmtDollar": Joi.number().precision(2),
-        // "ORDrCr": orDrCr,
-        // "ODDrCr": odDrCr,
-        "TraType": traType,
-        "OrgInvDate": orgInvDate,
-        "DueDays": dueDays,
-        "OrgRateType": 'RS',
-        // "OrgExRate": Joi.number().precision(4),
-        "OrgBrokerCode": brokerCode,
-        "OrgCt": orgCt,
-        "InvNo": invNo,
-      };
-
-      final response = await dio.post(
-        '${baseUrl}rough-entry/payment-det/add',
-        data: jsonEncode(params),
-      );
-
-      if (response.statusCode == 200) {
-        isLoading.value = false;
-
-        // successDialog(messageText: response.data['message']);
-        // await getPaymentMstData();
-      } else {
-        isLoading.value = false;
-        errorDialog(messageText: 'Failed to Add data: ${response.statusCode}');
-      }
-    } catch (error) {
-      isLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error  _addPaymentDetData');
-      }
-    }
-  }
-
-  Future<void> _addPaymentDetAccData(
-      {paymentMstId,
-      partyCode,
-      subRefId,
-      srNo,
-      trnType,
-      mstId,
-      dueDate,
-      drCr,
-      amtRs,
-      bAmtRs,
-      brDrCr,
-      jAmtRs,
-      uAmtRs,
-      oAmtRs,
-      orDrCr,
-      traType,
-      orgInvDate,
-      bdDrCr,
-      odDrCr,
-      dueDays,
-      brokerCode,
-      orgCt,
-      invNo}) async {
-    try {
-      isLoading.value = true;
-      final dio = ApiService.to.dio;
-      var params = <String, dynamic>{
-        "PaymentMstID": paymentMstId,
-        "PartyCode": partyCode,
-        "SubRefID": subRefId,
-        "SrNo": srNo,
-        "TrnType": trnType,
-        "MstID": mstId,
-        "DueDate": dueDate,
-        "DrCr": drCr,
-        "AmtRs": amtRs,
-        // "AmtDollar": Joi.number().precision(2),
-        "BAmtRs": bAmtRs,
-        // "BAmtDollar": Joi.number().precision(2),
-        "BRDrCr": brDrCr,
-        "BDDrCr": bdDrCr,
-        "JAmtRs": jAmtRs,
-        // "JAmtDollar": Joi.number().precision(2),
-        "UAmtRs": uAmtRs,
-        // "UAmtDollar": Joi.number().precision(2),
-        "OAmtRs": oAmtRs,
-        // "OAmtDollar": Joi.number().precision(2),
-        // "ORDrCr": orDrCr,
-        // "ODDrCr": odDrCr,
-        "TraType": traType,
-        "OrgInvDate": orgInvDate,
-        "DueDays": dueDays,
-        "OrgRateType": 'RS',
-        // "OrgExRate": Joi.number().precision(4),
-        "OrgBrokerCode": brokerCode,
-        "OrgCt": orgCt,
-        "InvNo": invNo,
-      };
-
-      // if (kDebugMode) {
-      //   print('Account Party Params: $params');
-      // }
-
-      final response = await dio.post(
-        '${baseUrl}rough-entry/payment-det-acc/add',
-        data: jsonEncode(params),
-      );
-
-      if (response.statusCode == 200) {
-        isLoading.value = false;
-
-        // successDialog(messageText: response.data['message']);
-        // await getPaymentMstData();
-      } else {
-        isLoading.value = false;
-        errorDialog(messageText: 'Failed to Add data: ${response.statusCode}');
-      }
-    } catch (error) {
-      isLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error  _addPaymentDetAccData');
+        log('$error updatePaymentData');
       }
     }
   }
@@ -6397,8 +5917,8 @@ class DefaultController extends GetxController {
         if (ifscCode != null) "IFSCCode": ifscCode,
         if (bankAcNo != null) "BankAcNo": bankAcNo,
         "Sflag": "I",
-        "LogID": 0,
-        "PcID": "TESTFROMWEB",
+        "LogID": currentUserId.value,
+        "PcID": _savePcId,
         "Ever": 0,
         "CompanyCode": companyCode.value,
         if (sortId != null) "SortID": sortId,
@@ -6524,8 +6044,8 @@ class DefaultController extends GetxController {
         if (ifscCode != null) "IFSCCode": ifscCode,
         if (bankAcNo != null) "BankAcNo": bankAcNo,
         "Sflag": "U",
-        "LogID": 0,
-        "PcID": "TESTFROMWEB",
+        "LogID": currentUserId.value,
+        "PcID": _savePcId,
         "Ever": 0,
         "CompanyCode": companyCode.value,
         if (sortId != null) "SortID": sortId,
@@ -6571,6 +6091,88 @@ class DefaultController extends GetxController {
         log('$error');
       }
     }
+  }
+
+  /// Rough Purchase items for the single-save API (same values the old
+  /// rough-details add / update calls sent). Existing items keep their
+  /// RoughPurDetID so the server updates them.
+  List<Map<String, dynamic>> _purchaseItemRows(List entries) {
+    final rows = <Map<String, dynamic>>[];
+    for (int i = 0; i < entries.length; i++) {
+      final value = entries[i];
+      final rate = value['rate'];
+      final amount = value['amount'];
+      final wt = value['wt'];
+      final rateRs = value['rateRs'] ?? rate;
+      final amtRs = value['amtRs'] ?? amount;
+      final rateDollar = value['rateDollar'] ?? rate;
+      final amtDollar = value['amtDollar'] ?? amount;
+      final pc = value['pc'] != null ? int.tryParse(value['pc'].toString()) : null;
+      final roughName = value['rough'];
+      final roughQualityCode = value['quality'] != null ? int.tryParse(value['quality'].toString()) : null;
+      final roughCharniCode = value['charni'] != null ? int.tryParse(value['charni'].toString()) : null;
+      final site = value['site'];
+      final description = value['description'];
+      final int? detId = int.tryParse(value['id']?.toString() ?? '');
+      rows.add({
+        if (detId != null) "RoughPurDetID": detId,
+        "Srno": i + 1,
+        "RoughTypeCode": roughName is int ? roughName : (int.tryParse(roughName?.toString() ?? '') ?? 1),
+        if (roughQualityCode != null) "RoughQualityCode": roughQualityCode,
+        if (roughCharniCode != null) "RoughCharniCode": roughCharniCode,
+        if (pc != null) "Pc": pc,
+        "Wt": wt is num ? wt : (double.tryParse(wt?.toString() ?? '0') ?? 0.0),
+        "RateRs": rateRs is num ? rateRs : (double.tryParse((rateRs ?? rate)?.toString() ?? '0') ?? 0.0),
+        "AmtRs": amtRs is num ? amtRs : (double.tryParse((amtRs ?? amount)?.toString() ?? '0') ?? 0.0),
+        "RateDollar": rateDollar is num ? rateDollar : (double.tryParse((rateDollar ?? rate)?.toString() ?? '0') ?? 0.0),
+        "AmtDollar": amtDollar is num ? amtDollar : (double.tryParse((amtDollar ?? amount)?.toString() ?? '0') ?? 0.0),
+        if (site != null && site.toString().isNotEmpty) "Site": site.toString(),
+        if (description != null && description.toString().isNotEmpty) "Description": description.toString(),
+      });
+    }
+    return rows;
+  }
+
+  /// The 2 party ledger rows of a Rough Purchase (company party DR, supplier
+  /// CR) - same values as before. The server links them to the purchase.
+  List<Map<String, dynamic>> _purchaseLedgerRows({
+    required invoiceDate,
+    formattedInvDate,
+    formattedDueDate,
+    partyCode,
+    brokerCode,
+    dueDays,
+    amount,
+    totalWt,
+  }) {
+    return List.generate(2, (index) {
+      return _creditDebitParams(
+        mstId: 0,
+        purMstId: 0,
+        saleMstId: 0,
+        invoiceDate: invoiceDate,
+        orgInvoiceDate: formattedInvDate,
+        paymentMstId: 0,
+        dueDate: formattedDueDate,
+        remarks1: ' ',
+        remarks2: ' ',
+        partyCode: index == 0 ? companyPartyCode.value.toString() : partyCode,
+        creditRs: index == 0 ? 0.00 : amount,
+        debitRs: index == 0 ? amount : 0.00,
+        invAmtRs: amount,
+        drCr: index == 0 ? 'DR' : 'CR',
+        formType: 'Purchase',
+        entryType: index == 0 ? 'NIL' : 'PARTY',
+        traType: index == 0 ? 'NIL' : 'PARTY',
+        formName: 'FrmPurchaseEntry',
+        perPartyCode: index == 0 ? partyCode : companyPartyCode.value.toString(),
+        orgCt: totalWt,
+        dueDays: dueDays,
+        invoiceNo: '',
+        srNo: index + 1,
+        brokerCode: brokerCode,
+      );
+    });
   }
 
   Future<bool> addPurchaseData({
@@ -6706,8 +6308,8 @@ class DefaultController extends GetxController {
         "TotAmtDollar": totalAmtDollar ?? totalAmt,
         "TotNetAmtRs": totNetAmtRs ?? totalAmt,
         "TotAmtRs": totalAmtRs ?? totalAmt,
-        "LogID": 0,
-        "PCID": "TESTFROMWEB",
+        "LogID": currentUserId.value,
+        "PCID": _savePcId,
         "Ever": 0,
         "SDate": formatToIsoUtc(DateTime.now()),
         "CompanyCode": companyCode.value,
@@ -6735,75 +6337,30 @@ class DefaultController extends GetxController {
         "RoundOfD": roundOfDollar ?? 0.0,
       };
 
-      final response = await dio.post('${baseUrl}rough-entry/purchase/add',
-          data: jsonEncode(params));
+      // Master + items + ledger go in ONE request; the server saves them in
+      // one transaction (all or nothing).
+      final response = await dio.post('${baseUrl}rough-entry/purchase/save',
+          data: jsonEncode({
+            'master': params,
+            'items': _purchaseItemRows(entries),
+            'ledger': _purchaseLedgerRows(
+              invoiceDate: invoiceDate,
+              formattedInvDate: formattedInvDate,
+              formattedDueDate: formattedDueDate,
+              partyCode: partyCode,
+              brokerCode: brokerCode,
+              dueDays: dueDays,
+              amount: totNetAmtRs ?? totalAmt,
+              totalWt: totalWt,
+            ),
+          }));
 
       if (response.statusCode == 200 && response.data != null && response.data['data'] != null) {
-        final dynamic mstId = response.data['data']?['RoughPurMstID'] ??
-            response.data['data']?['id'] ??
-            response.data['RoughPurMstID'] ??
-            response.data['id'];
-        final dynamic respInvoiceNo = response.data['data']?['InvoiceNo'] ??
-            response.data['InvoiceNo'] ??
-            invoiceNo;
-
-        await Future.wait(entries.asMap().entries.map((entry) {
-          int index = entry.key; // index of the current entry
-          var value = entry.value;
-          // current entry data
-          return _addPurchaseRoughData(
-              wt: value['wt'],
-              rate: value['rate'],
-              amount: value['amount'],
-              rateRs: value['rateRs'] ?? value['rate'],
-              amtRs: value['amtRs'] ?? value['amount'],
-              rateDollar: value['rateDollar'] ?? value['rate'],
-              amtDollar: value['amtDollar'] ?? value['amount'],
-              pc: value['pc'] != null ? int.tryParse(value['pc'].toString()) : null,
-              site: value['site'],
-              roughQualityCode: value['quality'] != null ? int.tryParse(value['quality'].toString()) : null,
-              roughCharniCode: value['charni'] != null ? int.tryParse(value['charni'].toString()) : null,
-              roughName: value['rough'],
-              description: value['description'],
-              roughPurMstID: mstId,
-              srNo: index + 1 // incremented srNo
-              );
-        }));
-        Future.wait(List.generate(2, (index) {
-          return addCreditDebitData(
-            mstId: mstId,
-            purMstId: mstId,
-            saleMstId: 0,
-            invoiceDate: invoiceDate,
-            orgInvoiceDate: formattedInvDate,
-            paymentMstId: 0,
-            dueDate: formattedDueDate,
-            remarks1: ' ',
-            remarks2: ' ',
-            partyCode:
-                index == 0 ? companyPartyCode.value.toString() : partyCode,
-            creditRs: index == 0 ? 0.00 : (totNetAmtRs ?? totalAmt),
-            debitRs: index == 0 ? (totNetAmtRs ?? totalAmt) : 0.00,
-            invAmtRs: (totNetAmtRs ?? totalAmt),
-            drCr: index == 0 ? 'DR' : 'CR',
-            formType: 'Purchase',
-            entryType: index == 0 ? 'NIL' : 'PARTY',
-            traType: index == 0 ? 'NIL' : 'PARTY',
-            formName: 'FrmPurchaseEntry',
-            perPartyCode:
-                index == 0 ? partyCode : companyPartyCode.value.toString(),
-            orgCt: totalWt,
-            dueDays: dueDays,
-            invoiceNo: respInvoiceNo,
-            srNo: index + 1,
-            brokerCode: brokerCode,
-          );
-        }));
         await getPurchaseData(force: true);
         await getPurchaseDetailsData(force: true);
-        await getCreditDebitData();
-        await getOutstandingPurchaseSaleDetails();
-        await getPendingPaymentData();
+        await getCreditDebitData(force: true);
+        await getOutstandingPurchaseSaleDetails(force: true);
+        await getPendingPaymentData(force: true);
 
         isLoading.value = false;
         successDialog(messageText: response.data['message'] ?? 'Purchase added successfully');
@@ -6857,7 +6414,7 @@ class DefaultController extends GetxController {
     } catch (error) {
       isLoading.value = false;
 
-      errorDialog(messageText: 'An unexpected error occurred.');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred.'));
       if (kDebugMode) {
         log('$error');
       }
@@ -6865,7 +6422,9 @@ class DefaultController extends GetxController {
     }
   }
 
-  Future<void> addCreditDebitData({
+  /// Builds one CreditDebitMst (ledger) row exactly as the add API expects.
+  /// Used by addCreditDebitData and by the Payment single-save call.
+  Map<String, dynamic> _creditDebitParams({
     String? partyCode,
     invoiceNo,
     invoiceDate,
@@ -6893,261 +6452,76 @@ class DefaultController extends GetxController {
     traType,
     dueDate,
     orgCt,
-  }) async {
-    try {
-      isLoading.value = true;
-      final dio = ApiService.to.dio;
+  }) {
+    final bool isPurchase = formType == 'Purchase';
 
-      final bool isPurchase = formType == 'Purchase';
+    final dynamic formattedInvDate = isPurchase
+        ? formatToIsoUtc(invoiceDate)
+        : (invoiceDate is DateTime
+            ? DateFormat('yyyy-MM-dd').format(invoiceDate)
+            : (DateTime.tryParse(invoiceDate.toString()) != null
+                ? DateFormat('yyyy-MM-dd').format(DateTime.parse(invoiceDate.toString()))
+                : invoiceDate.toString()));
 
-      final dynamic formattedInvDate = isPurchase
-          ? formatToIsoUtc(invoiceDate)
-          : (invoiceDate is DateTime
-              ? DateFormat('yyyy-MM-dd').format(invoiceDate)
-              : (DateTime.tryParse(invoiceDate.toString()) != null
-                  ? DateFormat('yyyy-MM-dd').format(DateTime.parse(invoiceDate.toString()))
-                  : invoiceDate.toString()));
+    final dynamic formattedDueDate = isPurchase
+        ? formatToIsoUtc(dueDate)
+        : dueDate;
 
-      final dynamic formattedDueDate = isPurchase
-          ? formatToIsoUtc(dueDate)
-          : dueDate;
+    final dynamic formattedOrgInvDate = isPurchase
+        ? formatToIsoUtc(orgInvoiceDate ?? invoiceDate)
+        : orgInvoiceDate;
 
-      final dynamic formattedOrgInvDate = isPurchase
-          ? formatToIsoUtc(orgInvoiceDate ?? invoiceDate)
-          : orgInvoiceDate;
+    final dynamic formattedSDateTime = isPurchase
+        ? formatToIsoUtc(DateTime.now())
+        : DateFormat('yyyy-MM-dd').format(DateTime.now());
 
-      final dynamic formattedSDateTime = isPurchase
-          ? formatToIsoUtc(DateTime.now())
-          : DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final Map<String, dynamic> params = {
+      "MstID": mstId,
+      // Purchase Sale Mst ID
+      "PurchaseMstID": purMstId,
+      "SaleMstID": saleMstId,
+      // "PolishPurMstID": polishPurMstId,
+      // "PolishRecMstID": polishRecMstId,
+      "PaymentMstID": paymentMstId,
+      "InvDate": formattedInvDate,
+      "DueDate": formattedDueDate,
+      "RateType": 'RS',
+      "ExRate": 0.00,
+      "PartyCode": partyCode,
+      "CreditRs": creditRs,
+      // "CreditDollar":Joi.number().precision(2),
+      "DebitRs": debitRs,
+      // "DebitDollar": Joi.number().precision(2),
+      "InvAmtRs": invAmtRs,
+      // "InvAmtDollar":Joi.number().precision(2),
+      "DrCrType": drCr,
+      "FormType": formType,
+      "EntryType": entryType,
+      "Sflag": 'I',
+      "SDateTime": formattedSDateTime,
+      "LogID": '${currentUserId.value}',
+      "PcID": _savePcId,
+      "Ever": 0,
+      "FormName": formName,
+      "SrNo": srNo,
+      "PerPartyCode": perPartyCode,
+      "Remarks1": remarks1,
+      "Remarks2": remarks2,
+      "CompanyCode": companyCode.value,
+      "TraType": traType,
+      // "OrgInvDate": DateFormat('yyyy-MM-dd HH:mm:ss').parse(orgInvoiceDate),
+      "OrgInvDate": formattedOrgInvDate,
+      "DueDays": dueDays,
+      "OrgRateType": 'RS',
+      "OrgExRate": 0.0,
+      "OrgBrokerCode": brokerCode,
+      "OrgCt": orgCt,
+      "InvoiceNo": invoiceNo,
+      // "PolishSaleMstId": Joi.number().integer(),
+      // "ExpenseMstID": Joi.number().integer(),
+    };
 
-      var params = {
-        "MstID": mstId,
-        // Purchase Sale Mst ID
-        "PurchaseMstID": purMstId,
-        "SaleMstID": saleMstId,
-        // "PolishPurMstID": polishPurMstId,
-        // "PolishRecMstID": polishRecMstId,
-        "PaymentMstID": paymentMstId,
-        "InvDate": formattedInvDate,
-        "DueDate": formattedDueDate,
-        "RateType": 'RS',
-        "ExRate": 0.00,
-        "PartyCode": partyCode,
-        "CreditRs": creditRs,
-        // "CreditDollar":Joi.number().precision(2),
-        "DebitRs": debitRs,
-        // "DebitDollar": Joi.number().precision(2),
-        "InvAmtRs": invAmtRs,
-        // "InvAmtDollar":Joi.number().precision(2),
-        "DrCrType": drCr,
-        "FormType": formType,
-        "EntryType": entryType,
-        "Sflag": 'I',
-        "SDateTime": formattedSDateTime,
-        "LogID": "0",
-        "PcID": 'TESTFROMWEB',
-        "Ever": 0,
-        "FormName": formName,
-        "SrNo": srNo,
-        "PerPartyCode": perPartyCode,
-        "Remarks1": remarks1,
-        "Remarks2": remarks2,
-        "CompanyCode": companyCode.value,
-        "TraType": traType,
-        // "OrgInvDate": DateFormat('yyyy-MM-dd HH:mm:ss').parse(orgInvoiceDate),
-        "OrgInvDate": formattedOrgInvDate,
-        "DueDays": dueDays,
-        "OrgRateType": 'RS',
-        "OrgExRate": 0.0,
-        "OrgBrokerCode": brokerCode,
-        "OrgCt": orgCt,
-        "InvoiceNo": invoiceNo,
-        // "PolishSaleMstId": Joi.number().integer(),
-        // "ExpenseMstID": Joi.number().integer(),
-      };
-
-      log(params.toString());
-
-      final response = await dio.post('${baseUrl}rough-entry/credit-debit/add',
-          data: jsonEncode(params));
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('${response.data['message']}');
-        }
-        isLoading.value = false;
-      } else {
-        isLoading.value = false;
-        errorDialog(messageText: 'Failed to Add data: ${response.statusCode}');
-      }
-    } catch (error) {
-      isLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error  addCreditDebitData');
-      }
-    }
-  }
-
-  Future<void> addSaleData(
-      {String? partyCode,
-      invoiceNo,
-      invoiceDate,
-      brokerCode,
-      dueDays,
-      dueDate,
-      onlyDueDate,
-      roughName,
-      description,
-      wt,
-      rate,
-      amount,
-      double? totalAmt,
-      totalWt,
-      totalRate,
-      required List<Map<String, String>> entries}) async {
-    try {
-      isLoading.value = true;
-      final dio = ApiService.to.dio;
-
-      var params = {
-        "PolishDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(invoiceDate),
-        "InvoiceNo": "$invoiceNo",
-        // "InvNo": 123,
-        "InvoiceDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(invoiceDate),
-        "DueDay": dueDays,
-        "DueDate": dueDate,
-        // "InvCode": "1",
-        // "SaleType": "LOCAL",
-        // "InsuranceName": "RELIANCE",
-        // "SGstPer": 12.453,
-        // "CGstPer": 12.453,
-        // "IGstPer": 12.453,
-        // "SGstAmount": 14.23,
-        // "CGstAmount": 12.23,
-        // "IGstAmount": 12.32,
-        // "SGstUsdAmount": 1.456,
-        // "CGstUsdAmount": 1.456,
-        // "IGstUsdAmount": 1.456,
-        "TotRsAmt": totalAmt, //total
-        "TotUsdAmt": totalAmt, // total
-        "RoundRs": 0,
-        "RoundUsd": 0,
-        "NetUsdAmount": totalAmt, //total
-        "RdType": "RS",
-        "DollarRate": 1,
-        "PaymentRec": "N",
-        "BroPer": 0,
-        "BroRsAmount": 0,
-        "BroUSDAmount": 0,
-        "BrokerCode": brokerCode,
-        "BankCode": 0,
-        "PartyCode": partyCode,
-        "FinalRsAmount": totalAmt, //total
-        "FinalUsdAmount": totalAmt, //total
-        "TPcs": 0,
-        "TWeight": totalWt, //total rough wt
-        "TRate": totalRate, // ang rate = total amt / total wt
-        "TAmount": totalAmt, // total
-        "TDRate": totalRate, // rate = toal amt / total wt
-        "TDAmount": totalAmt, // dollar amt total
-        "Sflag": "I",
-        "SDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
-        "LogID": 0, // userid
-        "PCID": "TESTWEB", // deviceId
-        "Ever": 0, // 0
-        "CompanyCode": companyCode.value // Global var Company Code
-      };
-
-      final response = await dio.post('${baseUrl}rough-entry/polish-sale/add',
-          data: jsonEncode(params));
-
-      if (response.data['data'] != null) {
-        await Future.wait(entries.asMap().entries.map((entry) {
-          int index = entry.key; // index of the current entry
-          var value = entry.value;
-          // current entry data
-          return _addSaleRoughData(
-              wt: value['wt'],
-              rate: value['rate'],
-              amount: value['amount'],
-              roughName: value['rough'],
-              description: value['description'],
-              polishSaleMstID: response.data['data']['PolishSaleMstID'],
-              srNo: index + 1 // incremented srNo
-              );
-        }));
-        Future.wait(List.generate(2, (index) {
-          return addCreditDebitData(
-            mstId: response.data['data']['PolishSaleMstID'],
-            purMstId: 0,
-            saleMstId: response.data['data']['PolishSaleMstID'],
-            invoiceDate: invoiceDate,
-            orgInvoiceDate: DateFormat('yyyy-MM-dd').format(invoiceDate),
-            paymentMstId: 0,
-            dueDate: dueDate,
-            remarks1: ' ',
-            remarks2: ' ',
-            partyCode:
-                index == 0 ? companyPartyCode.value.toString() : partyCode,
-            creditRs: index == 0 ? totalAmt : 0.00,
-            debitRs: index == 0 ? 0.00 : totalAmt,
-            invAmtRs: totalAmt,
-            drCr: index == 0 ? 'CR' : 'DR',
-            formType: 'Sale',
-            entryType: index == 0 ? 'NIL' : 'PARTY',
-            traType: index == 0 ? 'NIL' : 'PARTY',
-            formName: 'FrmSaleEntry',
-            perPartyCode:
-                index == 0 ? partyCode : companyPartyCode.value.toString(),
-            orgCt: totalWt,
-            dueDays: dueDays,
-            invoiceNo: response.data['data']['InvoiceNo'],
-            srNo: index + 1,
-            brokerCode: brokerCode,
-          );
-        }));
-        await getSaleData();
-        await getSaleDetailsData();
-        await getCreditDebitData();
-        await getOutstandingPurchaseSaleDetails();
-        await getPendingPaymentData();
-        final invoiceGenerator = SaleInvoiceGenerator();
-        final pdfData = await invoiceGenerator.generateInvoice(
-            id: polishSaleList.length + 1,
-            invoiceDate: invoiceDate,
-            invoiceNo: response.data['data']['InvoiceNo'],
-            partyCode: partyCode.toString(),
-            brokerCode: brokerCode,
-            dueDate: onlyDueDate,
-            dueDays: dueDays,
-            entries: entries,
-            totalWt: totalWt,
-            totalAmt: totalAmt!,
-            totalRate: totalRate);
-        isLoading.value = false;
-        await Printing.layoutPdf(
-          onLayout: (PdfPageFormat format) async => pdfData,
-        ).then((value) => successDialog(messageText: response.data['message']));
-        if (!kDebugMode) {
-          await Printing.sharePdf(
-            bytes: pdfData,
-            filename:
-                '${response.data['data']['InvoiceNo']}.pdf', // Set the custom name here
-          );
-        }
-      } else {
-        isLoading.value = false;
-        errorDialog(
-            messageText: 'Failed to Add data: : ${response.data['message']}');
-      }
-    } catch (error) {
-      isLoading.value = false;
-
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
+    return params;
   }
 
   // ==================== POLISH SALE (Memo Issue style screen) ====================
@@ -7175,6 +6549,70 @@ class DefaultController extends GetxController {
   /// Rough Type for a sale item - used by the stock report to reduce rough
   /// stock. ROUGH items take it from the selected purchase invoice; POLISH
   /// items return 0 so they do not reduce rough stock.
+  /// Stock left (ct) that a manager can still sell / put on memo from one
+  /// purchase invoice - same rule as the server check (per invoice + rough
+  /// type, after sales, memos and transfers). The rough type is found from the
+  /// selected quality + charni; without them the whole invoice is used.
+  /// Items already in [entries] (this document) are taken off, except the one
+  /// being edited. Returns null if the stock could not be loaded (the server
+  /// still checks on save).
+  Future<double?> roughStockLeft({
+    required int? managerId,
+    required String invoiceNo,
+    int? qualityCode,
+    int? charniCode,
+    List entries = const [],
+    int? editingIndex,
+    int? excludeSaleId,
+    int? excludeMemoIssueId,
+  }) async {
+    final String inv = invoiceNo.trim();
+    if (managerId == null || managerId <= 0 || inv.isEmpty) return null;
+    try {
+      final response = await ApiService.to.dio.get(
+        '${ApiService.to.baseUrl}rough-entry/stock/rough',
+        queryParameters: {
+          'companyCode': companyCode.value,
+          'managerId': managerId,
+          'invoiceNo': inv,
+          if (excludeSaleId != null && excludeSaleId > 0) 'excludeSaleId': excludeSaleId,
+          if (excludeMemoIssueId != null && excludeMemoIssueId > 0) 'excludeMemoIssueId': excludeMemoIssueId,
+        },
+      );
+      final data = response.data;
+      final List rows = (data is Map && data['data'] is List) ? data['data'] as List : const [];
+      int? toI(dynamic v) => v == null ? null : int.tryParse(v.toString());
+      double toD(dynamic v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
+      int? typeOf(int? q, int? c) {
+        if (q == null || c == null) return null;
+        final m = rows.firstWhereOrNull(
+            (r) => toI(r['RoughQualityCode']) == q && toI(r['RoughCharniCode']) == c);
+        return m == null ? null : toI(m['RoughTypeCode']);
+      }
+
+      final int? type = typeOf(qualityCode, charniCode);
+      double left;
+      if (type != null) {
+        final row = rows.firstWhere((r) => toI(r['RoughTypeCode']) == type);
+        left = toD(row['TypeWt']);
+      } else {
+        left = data is Map ? toD(data['invoiceWt']) : 0.0;
+      }
+      for (int i = 0; i < entries.length; i++) {
+        if (i == editingIndex) continue;
+        final e = entries[i];
+        if ((e['type'] ?? 'ROUGH').toString().toUpperCase() != 'ROUGH') continue;
+        if ((e['invNo'] ?? '').toString().trim() != inv) continue;
+        if (type != null && typeOf(toI(e['qualityCode']), toI(e['charniCode'])) != type) continue;
+        left -= toD(e['wt']);
+      }
+      return left < 0 ? 0.0 : left;
+    } catch (e) {
+      log('roughStockLeft error: $e');
+      return null;
+    }
+  }
+
   int _saleItemRoughTypeCode(Map value) {
     final String type = (value['type'] ?? 'ROUGH').toString().toUpperCase();
     if (type != 'ROUGH') return 0;
@@ -7249,7 +6687,7 @@ class DefaultController extends GetxController {
       "Sflag": sflag,
       "SDate": now,
       "LogID": fromUserId ?? currentUserId.value,
-      "PCID": "TESTWEB",
+      "PCID": _savePcId,
       "Ever": 0,
       "CompanyCode": companyCode.value,
       // GST / Net / Round / Brokerage / Final from the Sale screen summary
@@ -7285,24 +6723,10 @@ class DefaultController extends GetxController {
     };
   }
 
-  /// Saves one sale item: PUT when it already has an id, otherwise POST.
-  Future<void> _savePolishSaleItem(Map value,
-      {required int polishSaleMstID, required int srNo}) async {
-    final dio = ApiService.to.dio;
-    final params = _polishSaleItemParams(value, polishSaleMstID: polishSaleMstID, srNo: srNo);
-    final String id = value['id']?.toString() ?? '';
-    if (id.isNotEmpty) {
-      await dio.put('${baseUrl}rough-entry/sale-details/$id', data: jsonEncode(params));
-    } else {
-      await dio.post('${baseUrl}rough-entry/sale-details/add', data: jsonEncode(params));
-    }
-  }
-
   /// Party ledger (CreditDebitMst) rows for a sale - same two rows the old
-  /// Sale screen wrote on create: company party CR, sale party DR.
-  Future<void> _addPolishSaleLedger({
-    required int polishSaleMstID,
-    required String invoiceNo,
+  /// Sale screen wrote: company party CR, sale party DR. The server links them
+  /// to the sale id and its Invoice No.
+  List<Map<String, dynamic>> _polishSaleLedgerRows({
     required DateTime invoiceDate,
     partyCode,
     brokerCode,
@@ -7310,12 +6734,12 @@ class DefaultController extends GetxController {
     dueDate,
     double? totalAmt,
     totalWt,
-  }) async {
-    await Future.wait(List.generate(2, (index) {
-      return addCreditDebitData(
-        mstId: polishSaleMstID,
+  }) {
+    return List.generate(2, (index) {
+      return _creditDebitParams(
+        mstId: 0,
         purMstId: 0,
-        saleMstId: polishSaleMstID,
+        saleMstId: 0,
         invoiceDate: invoiceDate,
         orgInvoiceDate: DateFormat('yyyy-MM-dd').format(invoiceDate),
         paymentMstId: 0,
@@ -7334,11 +6758,24 @@ class DefaultController extends GetxController {
         perPartyCode: index == 0 ? partyCode : companyPartyCode.value.toString(),
         orgCt: totalWt,
         dueDays: dueDays,
-        invoiceNo: invoiceNo,
+        invoiceNo: '',
         srNo: index + 1,
         brokerCode: brokerCode,
       );
-    }));
+    });
+  }
+
+  /// Items for the single-save API. Existing items keep their PolishSaleDetID
+  /// so the server updates them; items without it are added.
+  List<Map<String, dynamic>> _polishSaleItemRows(List<Map<String, dynamic>> entries) {
+    return [
+      for (int i = 0; i < entries.length; i++)
+        {
+          ..._polishSaleItemParams(entries[i], polishSaleMstID: 0, srNo: i + 1),
+          if (int.tryParse(entries[i]['id']?.toString() ?? '') != null)
+            "PolishSaleDetID": int.parse(entries[i]['id'].toString()),
+        },
+    ];
   }
 
   Future<void> _refreshPolishSaleData() async {
@@ -7386,7 +6823,8 @@ class DefaultController extends GetxController {
     }
   }
 
-  /// Create a Polish Sale (master + items + party ledger). Returns the saved
+  /// Create a Polish Sale (master + items + party ledger) in ONE server
+  /// transaction - either everything is saved or nothing is. Returns the saved
   /// {id, invoiceNo} or null on failure.
   Future<Map<String, dynamic>?> addPolishSaleData({
     required String partyCode,
@@ -7408,28 +6846,40 @@ class DefaultController extends GetxController {
   }) async {
     try {
       isLoading.value = true;
-      final dio = ApiService.to.dio;
-      final params = _polishSaleMasterParams(
-        invoiceDate: invoiceDate,
-        sflag: 'I',
-        partyCode: partyCode,
-        brokerCode: brokerCode,
-        dueDays: dueDays,
-        dueDate: dueDate,
-        rdType: rdType,
-        dollarRate: dollarRate,
-        fromUserId: fromUserId,
-        totalPcs: totalPcs,
-        totalAmt: totalAmt,
-        totalAmtDollar: totalAmtDollar,
-        totalWt: totalWt,
-        totalRate: totalRate,
-        totalRateDollar: totalRateDollar,
-        summary: summary,
-      );
+      final payload = {
+        'master': _polishSaleMasterParams(
+          sflag: 'I',
+          invoiceDate: invoiceDate,
+          partyCode: partyCode,
+          brokerCode: brokerCode,
+          dueDays: dueDays,
+          dueDate: dueDate,
+          rdType: rdType,
+          dollarRate: dollarRate,
+          fromUserId: fromUserId,
+          totalPcs: totalPcs,
+          totalAmt: totalAmt,
+          totalAmtDollar: totalAmtDollar,
+          totalWt: totalWt,
+          totalRate: totalRate,
+          totalRateDollar: totalRateDollar,
+          summary: summary,
+        ),
+        'items': _polishSaleItemRows(entries),
+        'ledger': _polishSaleLedgerRows(
+          invoiceDate: invoiceDate,
+          partyCode: partyCode,
+          brokerCode: brokerCode,
+          dueDays: dueDays,
+          dueDate: dueDate,
+          // party ledger = Final Rs Amount (items + GST, after rounding)
+          totalAmt: (summary?['FinalRsAmount'] as num?)?.toDouble() ?? totalAmt,
+          totalWt: totalWt,
+        ),
+      };
 
-      final response =
-          await dio.post('${baseUrl}rough-entry/polish-sale/add', data: jsonEncode(params));
+      final response = await ApiService.to.dio
+          .post('${baseUrl}rough-entry/polish-sale/save', data: jsonEncode(payload));
       final data = response.data is Map ? response.data['data'] : null;
       if (data == null) {
         isLoading.value = false;
@@ -7439,29 +6889,13 @@ class DefaultController extends GetxController {
 
       final int mstId = int.tryParse(data['PolishSaleMstID'].toString()) ?? 0;
       final String invoiceNo = data['InvoiceNo']?.toString() ?? '';
-
-      for (int i = 0; i < entries.length; i++) {
-        await _savePolishSaleItem(entries[i], polishSaleMstID: mstId, srNo: i + 1);
-      }
-      await _addPolishSaleLedger(
-        polishSaleMstID: mstId,
-        invoiceNo: invoiceNo,
-        invoiceDate: invoiceDate,
-        partyCode: partyCode,
-        brokerCode: brokerCode,
-        dueDays: dueDays,
-        dueDate: dueDate,
-        // party ledger = Final Rs Amount (items + GST, after rounding)
-        totalAmt: (summary?['FinalRsAmount'] as num?)?.toDouble() ?? totalAmt,
-        totalWt: totalWt,
-      );
       await _refreshPolishSaleData();
       isLoading.value = false;
       successDialog(messageText: response.data['message']?.toString() ?? 'Sale saved');
       return {'id': mstId, 'invoiceNo': invoiceNo};
     } catch (error) {
       isLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred while saving the Sale.');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred while saving the Sale.'));
       if (kDebugMode) {
         log('addPolishSaleData error: $error');
       }
@@ -7469,8 +6903,9 @@ class DefaultController extends GetxController {
     }
   }
 
-  /// Update a Polish Sale. Invoice No never changes. The sale's ledger rows are
-  /// replaced (old rows deleted, new rows written) so edits don't duplicate them.
+  /// Update a Polish Sale in ONE server transaction. Invoice No never changes.
+  /// Items are updated / added / removed and the sale's ledger rows replaced
+  /// together; a failed edit keeps the old sale as it was.
   Future<bool> updatePolishSaleData({
     required int id,
     required String invoiceNo,
@@ -7493,57 +6928,53 @@ class DefaultController extends GetxController {
   }) async {
     try {
       isLoading.value = true;
-      final dio = ApiService.to.dio;
-      final params = _polishSaleMasterParams(
-        invoiceDate: invoiceDate,
-        sflag: 'U',
-        partyCode: partyCode,
-        brokerCode: brokerCode,
-        dueDays: dueDays,
-        dueDate: dueDate,
-        rdType: rdType,
-        dollarRate: dollarRate,
-        fromUserId: fromUserId,
-        totalPcs: totalPcs,
-        totalAmt: totalAmt,
-        totalAmtDollar: totalAmtDollar,
-        totalWt: totalWt,
-        totalRate: totalRate,
-        totalRateDollar: totalRateDollar,
-        summary: summary,
-      );
+      final payload = {
+        'master': _polishSaleMasterParams(
+          sflag: 'U',
+          invoiceDate: invoiceDate,
+          partyCode: partyCode,
+          brokerCode: brokerCode,
+          dueDays: dueDays,
+          dueDate: dueDate,
+          rdType: rdType,
+          dollarRate: dollarRate,
+          fromUserId: fromUserId,
+          totalPcs: totalPcs,
+          totalAmt: totalAmt,
+          totalAmtDollar: totalAmtDollar,
+          totalWt: totalWt,
+          totalRate: totalRate,
+          totalRateDollar: totalRateDollar,
+          summary: summary,
+        ),
+        'items': _polishSaleItemRows(entries),
+        'ledger': _polishSaleLedgerRows(
+          invoiceDate: invoiceDate,
+          partyCode: partyCode,
+          brokerCode: brokerCode,
+          dueDays: dueDays,
+          dueDate: dueDate,
+          // party ledger = Final Rs Amount (items + GST, after rounding)
+          totalAmt: (summary?['FinalRsAmount'] as num?)?.toDouble() ?? totalAmt,
+          totalWt: totalWt,
+        ),
+      };
 
-      final response =
-          await dio.put('${baseUrl}rough-entry/polish-sale/$id', data: jsonEncode(params));
+      final response = await ApiService.to.dio
+          .put('${baseUrl}rough-entry/polish-sale/save/$id', data: jsonEncode(payload));
       if (response.data is! Map || response.data['data'] == null) {
         isLoading.value = false;
         errorDialog(messageText: 'Failed to update Sale: ${response.data?['message'] ?? ''}');
         return false;
       }
 
-      for (int i = 0; i < entries.length; i++) {
-        await _savePolishSaleItem(entries[i], polishSaleMstID: id, srNo: i + 1);
-      }
-      await deleteSaleCreditDebitDetails(id: id);
-      await _addPolishSaleLedger(
-        polishSaleMstID: id,
-        invoiceNo: invoiceNo,
-        invoiceDate: invoiceDate,
-        partyCode: partyCode,
-        brokerCode: brokerCode,
-        dueDays: dueDays,
-        dueDate: dueDate,
-        // party ledger = Final Rs Amount (items + GST, after rounding)
-        totalAmt: (summary?['FinalRsAmount'] as num?)?.toDouble() ?? totalAmt,
-        totalWt: totalWt,
-      );
       await _refreshPolishSaleData();
       isLoading.value = false;
       successDialog(messageText: response.data['message']?.toString() ?? 'Sale updated');
       return true;
     } catch (error) {
       isLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred while updating the Sale.');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred while updating the Sale.'));
       if (kDebugMode) {
         log('updatePolishSaleData error: $error');
       }
@@ -7551,40 +6982,17 @@ class DefaultController extends GetxController {
     }
   }
 
-  /// Delete one sale item (used when removing an item while editing a sale).
-  Future<bool> deletePolishSaleItem({required int id}) async {
-    try {
-      final response = await ApiService.to.dio.delete('${baseUrl}rough-entry/sale-details/$id');
-      if (response.statusCode == 200) {
-        await getSaleDetailsData(force: true);
-        return true;
-      }
-    } catch (error) {
-      if (kDebugMode) {
-        log('deletePolishSaleItem error: $error');
-      }
-    }
-    errorDialog(messageText: 'Failed to delete the sale item.');
-    return false;
-  }
-
-  /// Delete a Polish Sale with its items and party ledger rows.
+  /// Delete a Polish Sale with its items and party ledger rows in ONE server
+  /// transaction.
   Future<bool> deletePolishSaleData({required int id, required List entries}) async {
     try {
       isDeleteLoading.value = true;
-      await deleteSaleCreditDebitDetails(id: id);
-      final dio = ApiService.to.dio;
-      final response = await dio.delete('${baseUrl}rough-entry/polish-sale/$id');
+      final response =
+          await ApiService.to.dio.delete('${baseUrl}rough-entry/polish-sale/full/$id');
       if (response.statusCode != 200) {
         isDeleteLoading.value = false;
         errorDialog(messageText: 'Failed to delete Sale: ${response.statusCode}');
         return false;
-      }
-      for (final value in entries) {
-        final String detId = value['id']?.toString() ?? '';
-        if (detId.isNotEmpty) {
-          await dio.delete('${baseUrl}rough-entry/sale-details/$detId');
-        }
       }
       await _refreshPolishSaleData();
       isDeleteLoading.value = false;
@@ -7592,7 +7000,7 @@ class DefaultController extends GetxController {
       return true;
     } catch (error) {
       isDeleteLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred while deleting the Sale.');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred while deleting the Sale.'));
       if (kDebugMode) {
         log('deletePolishSaleData error: $error');
       }
@@ -7618,6 +7026,97 @@ class DefaultController extends GetxController {
       }
     }
     return null;
+  }
+
+  /// Memo Issue items for the single-save API - same values the old
+  /// memo-issue-details add call sent. Existing items keep MemoIssueDetID.
+  List<Map<String, dynamic>> _memoIssueItemRows(List entries) {
+    final rows = <Map<String, dynamic>>[];
+    for (int i = 0; i < entries.length; i++) {
+      final value = entries[i];
+      final rate = value['rateRs'] ?? value['rate'];
+      final amount = value['amountRs'] ?? value['amount'];
+      final rateD = value['rateDollar'] ?? value['rateD'] ?? value['rate'];
+      final amountD = value['amountDollar'] ?? value['amountD'] ?? value['amount'];
+      final invNo = value['invNo'];
+      final roughPurMstID = value['roughPurMstID'];
+      final int? pcs = int.tryParse(value['pcs']?.toString() ?? '0');
+      final double? penCarats = double.tryParse(value['penWt']?.toString() ?? '0');
+      final int? detId = int.tryParse(value['id']?.toString() ?? '');
+      rows.add({
+        if (detId != null) "MemoIssueDetID": detId,
+        "SrNo": i + 1,
+        "ClarityCode": value['clarityCode'] ?? 0,
+        "CharniCode": value['charniCode'] ?? 0,
+        "ShapeCode": value['shapeCode'] ?? 0,
+        "ColorCode": value['colorCode'] ?? 0,
+        "QualityCode": value['qualityCode'] ?? 0,
+        if (pcs != null) "Pcs": pcs,
+        "Carats": value['wt'],
+        "RateRs": rate,
+        "AmountRs": amount,
+        "RateD": rateD ?? rate,
+        "AmountD": amountD ?? amount,
+        if (penCarats != null) "PenCarats": penCarats,
+        "Type": value['type'] ?? "ROUGH",
+        if (invNo != null && invNo.toString().isNotEmpty) "InvNo": invNo,
+        if (roughPurMstID != null) "RoughPurMstID": roughPurMstID is int ? roughPurMstID : (int.tryParse(roughPurMstID?.toString() ?? '') ?? roughPurMstID),
+        // Loaded items keep their stored rough type; new / changed items take it
+        // from the selected purchase invoice like Sale (before, every new item
+        // was saved as rough type 1, so the stock report was wrong).
+        "RoughTypeCode": int.tryParse(value['rough']?.toString() ?? '') ?? _saleItemRoughTypeCode(value),
+        "Rec": 'N',
+      });
+    }
+    return rows;
+  }
+
+  /// Memo Receive items for the single-save API - same values the old
+  /// memo-rec-details add call sent. Existing items keep MemoRecDetID.
+  /// 'detId' is the Memo Issue item that is returned.
+  List<Map<String, dynamic>> _memoRecItemRows(List<Map<String, dynamic>> entries) {
+    final rows = <Map<String, dynamic>>[];
+    for (int i = 0; i < entries.length; i++) {
+      final value = entries[i];
+      final rate = value['rateRs'] ?? value['rate'];
+      final amount = value['amountRs'] ?? value['amount'];
+      final rateD = value['rateDollar'] ?? value['rateD'] ?? value['rate'];
+      final amountD = value['amountDollar'] ?? value['amountD'] ?? value['amount'];
+      final invNo = value['invNo'];
+      final roughPurMstID = value['roughPurMstID'];
+      final int? pcs = int.tryParse(value['pcs']?.toString() ?? '0');
+      final int? recPcs = int.tryParse(value['recPcs']?.toString() ?? '0');
+      final double? penCarats = double.tryParse(value['penWt']?.toString() ?? '0');
+      final int? recDetId = int.tryParse(value['id']?.toString() ?? '');
+      rows.add({
+        if (recDetId != null) "MemoRecDetID": recDetId,
+        "MemoIssueDetID": int.tryParse(value['detId']?.toString() ?? ''),
+        "SrNo": i + 1,
+        "ClarityCode": value['clarityCode'] ?? 0,
+        "CharniCode": value['charniCode'] ?? 0,
+        "ShapeCode": value['shapeCode'] ?? 0,
+        "ColorCode": value['colorCode'] ?? 0,
+        "QualityCode": value['qualityCode'] ?? 0,
+        if (pcs != null) "Pcs": pcs,
+        if (recPcs != null) "RecPcs": recPcs,
+        "RecCarats": value['recWt'],
+        if (value['saleWt'] != null) "SaleCarats": value['saleWt'],
+        if (value['outWt'] != null) "OutCarats": value['outWt'],
+        "LossCarats": value['lossWt'],
+        if (value['totalWt'] != null) "TotalCarats": value['totalWt'],
+        "Carats": value['wt'],
+        "RateRs": rate,
+        "AmountRs": amount,
+        "RateD": rateD ?? rate,
+        "AmountD": amountD ?? amount,
+        if (penCarats != null) "PenCarats": penCarats,
+        "Type": value['type'] ?? "ROUGH",
+        if (invNo != null && invNo.toString().isNotEmpty) "InvNo": invNo,
+        if (roughPurMstID != null) "RoughPurMstID": roughPurMstID is int ? roughPurMstID : (int.tryParse(roughPurMstID?.toString() ?? '') ?? roughPurMstID),
+        "RoughTypeCode": int.tryParse((value['rough'] ?? '1')?.toString() ?? '1') ?? 1,
+      });
+    }
+    return rows;
   }
 
   Future<bool> addMemoIssueData(
@@ -7665,42 +7164,17 @@ class DefaultController extends GetxController {
         "Sflag": "I",
         "SDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
         "LogID": fromUserId ?? currentUserId.value, // userid
-        "PCID": "TESTWEB", // deviceId
+        "PCID": _savePcId, // deviceId
         "Ever": 0, // 0
         "CompanyCode": companyCode.value // Global var Company Code
       };
 
-      final response = await dio.post('${baseUrl}rough-entry/memo-issue/add',
-          data: jsonEncode(params));
+      // Master + items in ONE request; the server saves them in one
+      // transaction and creates the Memo No.
+      final response = await dio.post('${baseUrl}rough-entry/memo-issue/save',
+          data: jsonEncode({'master': params, 'items': _memoIssueItemRows(entries)}));
 
       if (response.data['data'] != null) {
-        await Future.wait(entries.asMap().entries.map((entry) {
-          int index = entry.key; // index of the current entry
-          var value = entry.value;
-          // current entry data
-          return _addMemoIssueRoughData(
-              wt: value['wt'],
-              rate: value['rateRs'] ?? value['rate'],
-              amount: value['amountRs'] ?? value['amount'],
-              rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
-              amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
-              type: value['type'] ?? 'ROUGH',
-              invNo: value['invNo'],
-              roughPurMstID: value['roughPurMstID'],
-              clarityCode: value['clarityCode'] ?? 0,
-              charniCode: value['charniCode'] ?? 0,
-              shapeCode: value['shapeCode'] ?? 0,
-              colorCode: value['colorCode'] ?? 0,
-              qualityCode: value['qualityCode'] ?? 0,
-              pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
-              penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
-              roughName: value['rough'] ?? '1',
-              description: value['description'],
-              memoIssueMstID: response.data['data']['MemoIssueMstID'],
-              srNo: index + 1,
-              rec: 'N' // incremented srNo
-              );
-        }));
         await getMemoIssueData(force: true);
         await getMemoIssueDetailsData(force: true);
         isLoading.value = true;
@@ -7735,7 +7209,7 @@ class DefaultController extends GetxController {
     } catch (error) {
       isLoading.value = false;
 
-      errorDialog(messageText: 'An unexpected error occurred.');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred.'));
       if (kDebugMode) {
         log('$error');
       }
@@ -7828,54 +7302,17 @@ class DefaultController extends GetxController {
         "Sflag": "I",
         "SDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
         "LogID": fromUserId ?? currentUserId.value, // userid
-        "PCID": "TESTWEB", // deviceId
+        "PCID": _savePcId, // deviceId
         "Ever": 0, // 0
         "CompanyCode": companyCode.value // Global var Company Code
       };
 
-      final response = await dio.post('${baseUrl}rough-entry/memo-rec/add',
-          data: jsonEncode(params));
+      // Master + items + "received" flag of the issued items in ONE
+      // request / transaction.
+      final response = await dio.post('${baseUrl}rough-entry/memo-rec/save',
+          data: jsonEncode({'master': params, 'items': _memoRecItemRows(entries)}));
 
       if (response.data['data'] != null) {
-        await Future.wait(entries.asMap().entries.map((entry) {
-          int index = entry.key; // index of the current entry
-          var value = entry.value;
-          // current entry data
-          return _addMemoRecRoughData(
-              memoIssueDetId: value['detId'],
-              wt: value['wt'],
-              recWt: value['recWt'],
-              saleWt: value['saleWt'],
-              outWt: value['outWt'],
-              lossWt: value['lossWt'],
-              totalWt: value['totalWt'],
-              rate: value['rateRs'] ?? value['rate'],
-              amount: value['amountRs'] ?? value['amount'],
-              rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
-              amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
-              roughName: value['rough'] ?? '1',
-              type: value['type'] ?? 'ROUGH',
-              invNo: value['invNo'],
-              roughPurMstID: value['roughPurMstID'],
-              clarityCode: value['clarityCode'] ?? 0,
-              charniCode: value['charniCode'] ?? 0,
-              shapeCode: value['shapeCode'] ?? 0,
-              colorCode: value['colorCode'] ?? 0,
-              qualityCode: value['qualityCode'] ?? 0,
-              pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
-              recPcs: int.tryParse(value['recPcs']?.toString() ?? '0'),
-              penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
-              memoRecMstID: response.data['data']['MemoRecMstID'],
-              srNo: index + 1 // incremented srNo
-              );
-        }));
-        await Future.wait(entries.asMap().entries.map((entry) {
-          var value = entry.value;
-          return _updateMemoIssueRoughData(
-            id: value['detId'],
-            rec: 'Y',
-          );
-        }));
         await getMemoRecData(force: true);
         await getMemoRecDetailsData(force: true);
         await getMemoIssueDetailsData(force: true);
@@ -7920,7 +7357,7 @@ class DefaultController extends GetxController {
     } catch (error) {
       isLoading.value = false;
 
-      errorDialog(messageText: '$error');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred.'));
       if (kDebugMode) {
         log('$error');
       }
@@ -8063,8 +7500,8 @@ class DefaultController extends GetxController {
         "TotAmtDollar": totalAmtDollar ?? totalAmt,
         "TotNetAmtRs": totNetAmtRs ?? totalAmt,
         "TotAmtRs": totalAmtRs ?? totalAmt,
-        "LogID": 0,
-        "PCID": "TESTFROMWEB",
+        "LogID": currentUserId.value,
+        "PCID": _savePcId,
         "Ever": 0,
         "SDate": formatToIsoUtc(DateTime.now()),
         "CompanyCode": companyCode.value,
@@ -8092,103 +7529,32 @@ class DefaultController extends GetxController {
         "RoundOfD": roundOfDollar ?? 0.0,
       };
 
-      final response = await dio.put('${baseUrl}rough-entry/purchase/$id',
-          data: jsonEncode(params));
+      // Master + items + ledger in ONE request / transaction. The server
+      // updates kept items, adds new ones, removes deleted ones and replaces
+      // this purchase's ledger rows (before, every edit added 2 more rows).
+      final response = await dio.put('${baseUrl}rough-entry/purchase/save/$id',
+          data: jsonEncode({
+            'master': params,
+            'items': _purchaseItemRows(entries),
+            'ledger': _purchaseLedgerRows(
+              invoiceDate: invoiceDate,
+              formattedInvDate: formattedInvDate,
+              formattedDueDate: formattedDueDate,
+              partyCode: partyCode,
+              brokerCode: brokerCode,
+              dueDays: dueDays,
+              amount: totNetAmtRs ?? totalAmt,
+              totalWt: totalWt,
+            ),
+          }));
 
-      if (response.statusCode == 200 &&
-          (response.data?['data'] != null ||
-              response.data?['message']?.toString().toLowerCase().contains('success') == true)) {
-        final dynamic mstId = response.data['data']?['RoughPurMstID'] ??
-            response.data['data']?['id'] ??
-            response.data['RoughPurMstID'] ??
-            response.data['id'] ??
-            id;
-        final dynamic respInvoiceNo = response.data['data']?['InvoiceNo'] ??
-            response.data['InvoiceNo'] ??
-            invoiceNo;
-
-        await Future.wait(entries.asMap().entries.map((entry) {
-          int index = entry.key; // index of the current entry
-          var value = entry.value;
-
-          // Check if the 'id' exists in the entry data
-          if (value.containsKey('id') && value['id'] != null) {
-            // Call the update function if 'id' exists
-            return _updatePurchaseRoughData(
-              id: value['id'],
-              wt: value['wt'],
-              rate: value['rate'],
-              amount: value['amount'],
-              rateRs: value['rateRs'] ?? value['rate'],
-              amtRs: value['amtRs'] ?? value['amount'],
-              rateDollar: value['rateDollar'] ?? value['rate'],
-              amtDollar: value['amtDollar'] ?? value['amount'],
-              pc: value['pc'] != null ? int.tryParse(value['pc'].toString()) : null,
-              site: value['site'],
-              roughQualityCode: value['quality'] != null ? int.tryParse(value['quality'].toString()) : null,
-              roughCharniCode: value['charni'] != null ? int.tryParse(value['charni'].toString()) : null,
-              description: value['description'],
-              roughName: value['rough'],
-              roughPurMstID: mstId,
-              srNo: index + 1, // incremented srNo
-            );
-          } else {
-            // Call the add function if 'id' does not exist
-            return _addPurchaseRoughData(
-              wt: value['wt'],
-              rate: value['rate'],
-              amount: value['amount'],
-              rateRs: value['rateRs'] ?? value['rate'],
-              amtRs: value['amtRs'] ?? value['amount'],
-              rateDollar: value['rateDollar'] ?? value['rate'],
-              amtDollar: value['amtDollar'] ?? value['amount'],
-              pc: value['pc'] != null ? int.tryParse(value['pc'].toString()) : null,
-              site: value['site'],
-              roughQualityCode: value['quality'] != null ? int.tryParse(value['quality'].toString()) : null,
-              roughCharniCode: value['charni'] != null ? int.tryParse(value['charni'].toString()) : null,
-              description: value['description'],
-              roughName: value['rough'],
-              roughPurMstID: mstId,
-              srNo: index + 1, // incremented srNo
-            );
-          }
-        }));
-        Future.wait(List.generate(2, (index) {
-          return addCreditDebitData(
-            mstId: mstId,
-            purMstId: mstId,
-            saleMstId: 0,
-            invoiceDate: invoiceDate,
-            orgInvoiceDate: formattedInvDate,
-            paymentMstId: 0,
-            dueDate: formattedDueDate,
-            remarks1: ' ',
-            remarks2: ' ',
-            partyCode:
-                index == 0 ? companyPartyCode.value.toString() : partyCode,
-            creditRs: index == 0 ? 0.00 : (totNetAmtRs ?? totalAmt),
-            debitRs: index == 0 ? (totNetAmtRs ?? totalAmt) : 0.00,
-            invAmtRs: (totNetAmtRs ?? totalAmt),
-            drCr: index == 0 ? 'DR' : 'CR',
-            formType: 'Purchase',
-            entryType: index == 0 ? 'NIL' : 'PARTY',
-            traType: index == 0 ? 'NIL' : 'PARTY',
-            formName: 'FrmPurchaseEntry',
-            perPartyCode:
-                index == 0 ? partyCode : companyPartyCode.value.toString(),
-            orgCt: totalWt,
-            dueDays: dueDays,
-            invoiceNo: respInvoiceNo,
-            srNo: index + 1,
-            brokerCode: brokerCode,
-          );
-        }));
+      if (response.statusCode == 200 && response.data?['data'] != null) {
         isLoading.value = false;
         await getPurchaseData(force: true);
         await getPurchaseDetailsData(force: true);
-        await getCreditDebitData();
-        await getOutstandingPurchaseSaleDetails();
-        await getPendingPaymentData();
+        await getCreditDebitData(force: true);
+        await getOutstandingPurchaseSaleDetails(force: true);
+        await getPendingPaymentData(force: true);
         successDialog(messageText: response.data['message'] ?? 'Purchase updated successfully');
 
         /*
@@ -8234,186 +7600,11 @@ class DefaultController extends GetxController {
     } catch (error) {
       isLoading.value = false;
 
-      errorDialog(messageText: 'An unexpected error occurred.');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred.'));
       if (kDebugMode) {
         log('$error');
       }
       return false;
-    }
-  }
-
-  Future<void> updateSaleData(
-      {required int id,
-      String? partyCode,
-      invoiceNo,
-      invoiceDate,
-      brokerCode,
-      dueDays,
-      dueDate,
-      onlyDueDate,
-      roughName,
-      description,
-      wt,
-      rate,
-      amount,
-      double? totalAmt,
-      totalWt,
-      totalRate,
-      required List<Map<String, String>> entries}) async {
-    try {
-      isLoading.value = true;
-      await deleteSaleCreditDebitDetails(id: id);
-      final dio = ApiService.to.dio;
-
-      var params = {
-        "PolishDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(invoiceDate),
-        "InvoiceNo": "$invoiceNo",
-        // "InvNo": 123,
-        "InvoiceDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(invoiceDate),
-        "DueDay": dueDays,
-        "DueDate": dueDate,
-        // "InvCode": "1",
-        // "SaleType": "LOCAL",
-        // "InsuranceName": "RELIANCE",
-        // "SGstPer": 12.453,
-        // "CGstPer": 12.453,
-        // "IGstPer": 12.453,
-        // "SGstAmount": 14.23,
-        // "CGstAmount": 12.23,
-        // "IGstAmount": 12.32,
-        // "SGstUsdAmount": 1.456,
-        // "CGstUsdAmount": 1.456,
-        // "IGstUsdAmount": 1.456,
-        "TotRsAmt": totalAmt, //total
-        "TotUsdAmt": totalAmt, // total
-        "RoundRs": 0,
-        "RoundUsd": 0,
-        "NetUsdAmount": totalAmt, //total
-        "RdType": "RS",
-        "DollarRate": 1,
-        "PaymentRec": "N",
-        "BroPer": 0,
-        "BroRsAmount": 0,
-        "BroUSDAmount": 0,
-        "BrokerCode": brokerCode,
-        "BankCode": 0,
-        "PartyCode": partyCode,
-        "FinalRsAmount": totalAmt, //total
-        "FinalUsdAmount": totalAmt, //total
-        "TPcs": 0,
-        "TWeight": totalWt, //total rough wt
-        "TRate": totalRate, // ang rate = total amt / total wt
-        "TAmount": totalAmt, // total
-        "TDRate": totalRate, // rate = toal amt / total wt
-        "TDAmount": totalAmt, // dollar amt total
-        "Sflag": "U",
-        "SDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
-        "LogID": 0, // userid
-        "PCID": "TESTWEB", // deviceId
-        "Ever": 0, // 0
-        "CompanyCode": companyCode.value // Global var Company Code
-      };
-
-      final response = await dio.put('${baseUrl}rough-entry/polish-sale/$id',
-          data: jsonEncode(params));
-
-      if (response.data['data'] != null) {
-        await Future.wait(entries.asMap().entries.map((entry) {
-          int index = entry.key; // index of the current entry
-          var value = entry.value;
-          // current entry data
-          if (value.containsKey('id') && value['id'] != null) {
-            return _updateSaleRoughData(
-                id: value['id'],
-                wt: value['wt'],
-                rate: value['rate'],
-                amount: value['amount'],
-                roughName: value['rough'],
-                description: value['description'],
-                polishSaleMstID: response.data['data']['PolishSaleMstID'],
-                srNo: index + 1 // incremented srNo
-                );
-          } else {
-            return _addSaleRoughData(
-                wt: value['wt'],
-                rate: value['rate'],
-                amount: value['amount'],
-                description: value['description'],
-                roughName: value['rough'],
-                polishSaleMstID: response.data['data']['PolishSaleMstID'],
-                srNo: index + 1 // incremented srNo
-                );
-          }
-        }));
-        Future.wait(List.generate(2, (index) {
-          return addCreditDebitData(
-            mstId: response.data['data']['PolishSaleMstID'],
-            purMstId: 0,
-            saleMstId: response.data['data']['PolishSaleMstID'],
-            invoiceDate: invoiceDate,
-            orgInvoiceDate: DateFormat('yyyy-MM-dd').format(invoiceDate),
-            paymentMstId: 0,
-            dueDate: dueDate,
-            remarks1: ' ',
-            remarks2: ' ',
-            partyCode:
-                index == 0 ? companyPartyCode.value.toString() : partyCode,
-            creditRs: index == 0 ? 0.00 : totalAmt,
-            debitRs: index == 0 ? totalAmt : 0.00,
-            invAmtRs: totalAmt,
-            drCr: index == 0 ? 'DR' : 'CR',
-            formType: 'Sale',
-            entryType: index == 0 ? 'NIL' : 'PARTY',
-            traType: index == 0 ? 'NIL' : 'PARTY',
-            formName: 'FrmSaleEntry',
-            perPartyCode:
-                index == 0 ? partyCode : companyPartyCode.value.toString(),
-            orgCt: totalWt,
-            dueDays: dueDays,
-            invoiceNo: response.data['data']['InvoiceNo'],
-            srNo: index + 1,
-            brokerCode: brokerCode,
-          );
-        }));
-        await getSaleData();
-        await getSaleDetailsData();
-        await getCreditDebitData();
-        await getOutstandingPurchaseSaleDetails();
-        await getPendingPaymentData();
-        isLoading.value = false;
-        final invoiceGenerator = SaleInvoiceGenerator();
-        final pdfData = await invoiceGenerator.generateInvoice(
-            id: polishSaleList.length + 1,
-            invoiceDate: invoiceDate,
-            invoiceNo: invoiceNo,
-            partyCode: partyCode.toString(),
-            brokerCode: brokerCode,
-            dueDate: onlyDueDate,
-            dueDays: dueDays,
-            entries: entries,
-            totalWt: totalWt,
-            totalAmt: totalAmt!,
-            totalRate: totalRate);
-        await Printing.layoutPdf(
-          onLayout: (PdfPageFormat format) async => pdfData,
-        ).then((value) => successDialog(messageText: response.data['message']));
-        await Printing.sharePdf(
-          bytes: pdfData,
-          filename: '$invoiceNo.pdf', // Set the custom name here
-        );
-      } else {
-        isLoading.value = false;
-
-        errorDialog(
-            messageText: 'Failed to Add data: : ${response.data['message']}');
-      }
-    } catch (error) {
-      isLoading.value = false;
-
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
     }
   }
 
@@ -8463,68 +7654,17 @@ class DefaultController extends GetxController {
         "Sflag": "U",
         "SDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
         "LogID": fromUserId ?? currentUserId.value, // userid
-        "PCID": "TESTWEB", // deviceId
+        "PCID": _savePcId, // deviceId
         "Ever": 0, // 0
         "CompanyCode": companyCode.value // Global var Company Code
       };
 
-      final response = await dio.put('${baseUrl}rough-entry/memo-issue/$id',
-          data: jsonEncode(params));
+      // Master + items in ONE request / transaction. Kept items keep their
+      // "received" status; an item already received cannot be removed.
+      final response = await dio.put('${baseUrl}rough-entry/memo-issue/save/$id',
+          data: jsonEncode({'master': params, 'items': _memoIssueItemRows(entries)}));
 
       if (response.data['data'] != null) {
-        await Future.wait(entries.asMap().entries.map((entry) {
-          int index = entry.key; // index of the current entry
-          var value = entry.value;
-          // current entry data
-          if (value.containsKey('id') && value['id'] != null && value['id'].toString().isNotEmpty) {
-            return _updateMemoIssueRoughData(
-                id: value['id'],
-                wt: value['wt'],
-                rate: value['rateRs'] ?? value['rate'],
-                amount: value['amountRs'] ?? value['amount'],
-                rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
-                amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
-                type: value['type'] ?? 'ROUGH',
-                invNo: value['invNo'],
-                roughPurMstID: value['roughPurMstID'],
-                clarityCode: value['clarityCode'] ?? 0,
-                charniCode: value['charniCode'] ?? 0,
-                shapeCode: value['shapeCode'] ?? 0,
-                colorCode: value['colorCode'] ?? 0,
-                qualityCode: value['qualityCode'] ?? 0,
-                pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
-                penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
-                roughName: value['rough'] ?? '1',
-                description: value['description'],
-                memoIssueMstID: response.data['data']['MemoIssueMstID'],
-                srNo: index + 1,
-                rec: 'N' // incremented srNo
-                );
-          } else {
-            return _addMemoIssueRoughData(
-                wt: value['wt'],
-                rate: value['rateRs'] ?? value['rate'],
-                amount: value['amountRs'] ?? value['amount'],
-                rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
-                amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
-                type: value['type'] ?? 'ROUGH',
-                invNo: value['invNo'],
-                roughPurMstID: value['roughPurMstID'],
-                clarityCode: value['clarityCode'] ?? 0,
-                charniCode: value['charniCode'] ?? 0,
-                shapeCode: value['shapeCode'] ?? 0,
-                colorCode: value['colorCode'] ?? 0,
-                qualityCode: value['qualityCode'] ?? 0,
-                pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
-                penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
-                description: value['description'],
-                roughName: value['rough'] ?? '1',
-                memoIssueMstID: response.data['data']['MemoIssueMstID'],
-                srNo: index + 1,
-                rec: 'N' // incremented srNo
-                );
-          }
-        }));
         await getMemoIssueData(force: true);
         await getMemoIssueDetailsData(force: true);
         isLoading.value = true;
@@ -8559,7 +7699,7 @@ class DefaultController extends GetxController {
     } catch (error) {
       isLoading.value = false;
 
-      errorDialog(messageText: 'An unexpected error occurred.');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred.'));
       if (kDebugMode) {
         log('$error');
       }
@@ -8652,78 +7792,17 @@ class DefaultController extends GetxController {
         "Sflag": "U",
         "SDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
         "LogID": fromUserId ?? currentUserId.value, // userid
-        "PCID": "TESTWEB", // deviceId
+        "PCID": _savePcId, // deviceId
         "Ever": 0, // 0
         "CompanyCode": companyCode.value // Global var Company Code
       };
 
-      final response = await dio.put('${baseUrl}rough-entry/memo-rec/$id',
-          data: jsonEncode(params));
+      // Master + items in ONE request / transaction. Removed items are
+      // deleted and their issued items become pending again.
+      final response = await dio.put('${baseUrl}rough-entry/memo-rec/save/$id',
+          data: jsonEncode({'master': params, 'items': _memoRecItemRows(entries)}));
 
       if (response.data['data'] != null) {
-        await Future.wait(entries.asMap().entries.map((entry) {
-          int index = entry.key; // index of the current entry
-          var value = entry.value;
-          // current entry data
-          if (value.containsKey('id') && value['id'] != null) {
-            return _updateMemoRecRoughData(
-                id: value['id'],
-                memoIssueDetId: value['detId'],
-                wt: value['wt'],
-                recWt: value['recWt'],
-                saleWt: value['saleWt'],
-                outWt: value['outWt'],
-                lossWt: value['lossWt'],
-                totalWt: value['totalWt'],
-                rate: value['rateRs'] ?? value['rate'],
-                amount: value['amountRs'] ?? value['amount'],
-                rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
-                amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
-                roughName: value['rough'] ?? '1',
-                type: value['type'] ?? 'ROUGH',
-                invNo: value['invNo'],
-                roughPurMstID: value['roughPurMstID'],
-                clarityCode: value['clarityCode'] ?? 0,
-                charniCode: value['charniCode'] ?? 0,
-                shapeCode: value['shapeCode'] ?? 0,
-                colorCode: value['colorCode'] ?? 0,
-                qualityCode: value['qualityCode'] ?? 0,
-                pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
-                recPcs: int.tryParse(value['recPcs']?.toString() ?? '0'),
-                penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
-                memoRecMstID: response.data['data']['MemoRecMstID'],
-                srNo: index + 1 // incremented srNo
-                );
-          } else {
-            return _addMemoRecRoughData(
-                memoIssueDetId: value['detId'],
-                wt: value['wt'],
-                recWt: value['recWt'],
-                saleWt: value['saleWt'],
-                outWt: value['outWt'],
-                lossWt: value['lossWt'],
-                totalWt: value['totalWt'],
-                rate: value['rateRs'] ?? value['rate'],
-                amount: value['amountRs'] ?? value['amount'],
-                rateD: value['rateDollar'] ?? value['rateD'] ?? value['rate'],
-                amountD: value['amountDollar'] ?? value['amountD'] ?? value['amount'],
-                roughName: value['rough'] ?? '1',
-                type: value['type'] ?? 'ROUGH',
-                invNo: value['invNo'],
-                roughPurMstID: value['roughPurMstID'],
-                clarityCode: value['clarityCode'] ?? 0,
-                charniCode: value['charniCode'] ?? 0,
-                shapeCode: value['shapeCode'] ?? 0,
-                colorCode: value['colorCode'] ?? 0,
-                qualityCode: value['qualityCode'] ?? 0,
-                pcs: int.tryParse(value['pcs']?.toString() ?? '0'),
-                recPcs: int.tryParse(value['recPcs']?.toString() ?? '0'),
-                penCarats: double.tryParse(value['penWt']?.toString() ?? '0'),
-                memoRecMstID: response.data['data']['MemoRecMstID'],
-                srNo: index + 1 // incremented srNo
-                );
-          }
-        }));
         await getMemoRecData(force: true);
         await getMemoRecDetailsData(force: true);
         await getMemoIssueDetailsData(force: true);
@@ -8765,630 +7844,11 @@ class DefaultController extends GetxController {
     } catch (error) {
       isLoading.value = false;
 
-      errorDialog(messageText: 'An unexpected error occurred.');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred.'));
       if (kDebugMode) {
         log('$error');
       }
       return false;
-    }
-  }
-
-  Future<void> _addPurchaseRoughData({
-    roughName,
-    roughPurMstID,
-    wt,
-    rate,
-    amount,
-    description,
-    srNo,
-    roughQualityCode,
-    roughCharniCode,
-    pc,
-    rateRs,
-    amtRs,
-    rateDollar,
-    amtDollar,
-    site,
-  }) async {
-    try {
-      final dio = ApiService.to.dio;
-
-      var params = {
-        "RoughPurMstID": roughPurMstID is int ? roughPurMstID : (int.tryParse(roughPurMstID?.toString() ?? '') ?? roughPurMstID),
-        "Srno": srNo is int ? srNo : (int.tryParse(srNo?.toString() ?? '') ?? 1),
-        "RoughTypeCode": roughName is int ? roughName : (int.tryParse(roughName?.toString() ?? '') ?? 1),
-        if (roughQualityCode != null) "RoughQualityCode": roughQualityCode is int ? roughQualityCode : (int.tryParse(roughQualityCode.toString()) ?? roughQualityCode),
-        if (roughCharniCode != null) "RoughCharniCode": roughCharniCode is int ? roughCharniCode : (int.tryParse(roughCharniCode.toString()) ?? roughCharniCode),
-        if (pc != null) "Pc": pc is int ? pc : (int.tryParse(pc.toString()) ?? 0),
-        "Wt": wt is num ? wt : (double.tryParse(wt?.toString() ?? '0') ?? 0.0),
-        "RateRs": rateRs is num ? rateRs : (double.tryParse((rateRs ?? rate)?.toString() ?? '0') ?? 0.0),
-        "AmtRs": amtRs is num ? amtRs : (double.tryParse((amtRs ?? amount)?.toString() ?? '0') ?? 0.0),
-        "RateDollar": rateDollar is num ? rateDollar : (double.tryParse((rateDollar ?? rate)?.toString() ?? '0') ?? 0.0),
-        "AmtDollar": amtDollar is num ? amtDollar : (double.tryParse((amtDollar ?? amount)?.toString() ?? '0') ?? 0.0),
-        if (site != null && site.toString().isNotEmpty) "Site": site.toString(),
-        if (description != null && description.toString().isNotEmpty) "Description": description.toString(),
-      };
-
-      final response = await dio.post('${baseUrl}rough-entry/rough-details/add',
-          data: jsonEncode(params));
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Added!');
-        }
-      } else {
-        errorDialog(
-            messageText: 'Failed to Add data: : ${response.data['message']}');
-      }
-    } catch (error) {
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> _addSaleRoughData(
-      {roughName, wt, rate, amount, description, srNo, polishSaleMstID}) async {
-    try {
-      final dio = ApiService.to.dio;
-
-      var params = {
-        "PolishSaleMstID": polishSaleMstID,
-        "SrNo": srNo,
-        // "ClarityCode": 1,
-        // "CharniCode": 1,
-        // "Pcs": 1,
-        "Carats": wt,
-        "RateRs": rate,
-        "AmountRs": amount,
-        "RateD": rate,
-        "AmountD": amount,
-        // "PenCarats": 12.232,
-        "Type": "ROUGH",
-        // "InvNo": "",
-        // "RoughPurMstID": 2,
-        "RoughTypeCode": int.parse(roughName),
-        "Description": description
-      };
-
-      final response = await dio.post('${baseUrl}rough-entry/sale-details/add',
-          data: jsonEncode(params));
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Added!');
-        }
-      } else {
-        errorDialog(
-            messageText: 'Failed to Add data: : ${response.statusCode}');
-      }
-    } catch (error) {
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> _addMemoIssueRoughData(
-      {roughName,
-      wt,
-      rate,
-      amount,
-      rateD,
-      amountD,
-      type,
-      invNo,
-      roughPurMstID,
-      clarityCode,
-      charniCode,
-      shapeCode,
-      colorCode,
-      qualityCode,
-      pcs,
-      penCarats,
-      description,
-      srNo,
-      memoIssueMstID,
-      rec}) async {
-    try {
-      final dio = ApiService.to.dio;
-
-      var params = {
-        "MemoIssueMstID": memoIssueMstID,
-        "SrNo": srNo,
-        if (clarityCode != null) "ClarityCode": clarityCode,
-        if (charniCode != null) "CharniCode": charniCode,
-        if (shapeCode != null) "ShapeCode": shapeCode,
-        if (colorCode != null) "ColorCode": colorCode,
-        if (qualityCode != null) "QualityCode": qualityCode,
-        if (pcs != null) "Pcs": pcs,
-        "Carats": wt,
-        "RateRs": rate,
-        "AmountRs": amount,
-        "RateD": rateD ?? rate,
-        "AmountD": amountD ?? amount,
-        if (penCarats != null) "PenCarats": penCarats,
-        "Type": type ?? "ROUGH",
-        if (invNo != null && invNo.toString().isNotEmpty) "InvNo": invNo,
-        if (roughPurMstID != null) "RoughPurMstID": roughPurMstID is int ? roughPurMstID : (int.tryParse(roughPurMstID?.toString() ?? '') ?? roughPurMstID),
-        "RoughTypeCode": int.tryParse(roughName?.toString() ?? '') ?? 1,
-        // "Description": description,
-        "Rec": rec ?? 'N'
-      };
-
-      final response = await dio.post(
-          '${baseUrl}rough-entry/memo-issue-details/add',
-          data: jsonEncode(params));
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Added!');
-        }
-      } else {
-        errorDialog(
-            messageText: 'Failed to Add data: : ${response.statusCode}');
-      }
-    } catch (error) {
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> _addMemoRecRoughData(
-      {memoIssueDetId,
-      roughName,
-      wt,
-      recWt,
-      saleWt,
-      outWt,
-      lossWt,
-      totalWt,
-      rate,
-      amount,
-      rateD,
-      amountD,
-      description,
-      srNo,
-      type,
-      invNo,
-      roughPurMstID,
-      clarityCode,
-      charniCode,
-      shapeCode,
-      colorCode,
-      qualityCode,
-      pcs,
-      recPcs,
-      penCarats,
-      memoRecMstID}) async {
-    try {
-      final dio = ApiService.to.dio;
-
-      var params = {
-        "MemoRecMstID": memoRecMstID,
-        "MemoIssueDetID": memoIssueDetId,
-        "SrNo": srNo,
-        if (clarityCode != null) "ClarityCode": clarityCode,
-        if (charniCode != null) "CharniCode": charniCode,
-        if (shapeCode != null) "ShapeCode": shapeCode,
-        if (colorCode != null) "ColorCode": colorCode,
-        if (qualityCode != null) "QualityCode": qualityCode,
-        if (pcs != null) "Pcs": pcs,
-        if (recPcs != null) "RecPcs": recPcs,
-        "RecCarats": recWt,
-        if (saleWt != null) "SaleCarats": saleWt,
-        if (outWt != null) "OutCarats": outWt,
-        "LossCarats": lossWt,
-        if (totalWt != null) "TotalCarats": totalWt,
-        "Carats": wt,
-        "RateRs": rate,
-        "AmountRs": amount,
-        "RateD": rateD ?? rate,
-        "AmountD": amountD ?? amount,
-        if (penCarats != null) "PenCarats": penCarats,
-        "Type": type ?? "ROUGH",
-        if (invNo != null && invNo.toString().isNotEmpty) "InvNo": invNo,
-        if (roughPurMstID != null) "RoughPurMstID": roughPurMstID is int ? roughPurMstID : (int.tryParse(roughPurMstID?.toString() ?? '') ?? roughPurMstID),
-        "RoughTypeCode": int.tryParse(roughName?.toString() ?? '1') ?? 1,
-      };
-
-      final response = await dio.post(
-          '${baseUrl}rough-entry/memo-rec-details/add',
-          data: jsonEncode(params));
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Added!');
-        }
-      } else {
-        errorDialog(
-            messageText: 'Failed to Add data: : ${response.statusCode}');
-      }
-    } catch (error) {
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> _updateSaleRoughData(
-      {required id,
-      roughName,
-      wt,
-      description,
-      rate,
-      amount,
-      srNo,
-      polishSaleMstID}) async {
-    try {
-      final dio = ApiService.to.dio;
-
-      var params = {
-        "PolishSaleMstID": polishSaleMstID,
-        "SrNo": srNo,
-        // "ClarityCode": 1,
-        // "CharniCode": 1,
-        // "Pcs": 1,
-        "Carats": wt,
-        "RateRs": rate,
-        "AmountRs": amount,
-        "RateD": rate,
-        "AmountD": amount,
-        // "PenCarats": 12.232,
-        "Type": "ROUGH",
-        // "InvNo": "",
-        // "RoughPurMstID": 2,
-        "RoughTypeCode": int.parse(roughName),
-        "Description": description
-      };
-
-      final response = await dio.put('${baseUrl}rough-entry/sale-details/$id',
-          data: jsonEncode(params));
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Updated!');
-        }
-      } else {
-        errorDialog(
-            messageText: 'Failed to Update Data: ${response.statusCode}');
-      }
-    } catch (error) {
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> _updateMemoIssueRoughData(
-      {required id,
-      roughName,
-      wt,
-      description,
-      rate,
-      amount,
-      rateD,
-      amountD,
-      type,
-      invNo,
-      roughPurMstID,
-      clarityCode,
-      charniCode,
-      shapeCode,
-      colorCode,
-      qualityCode,
-      pcs,
-      penCarats,
-      srNo,
-      rec,
-      memoIssueMstID}) async {
-    try {
-      final dio = ApiService.to.dio;
-
-      var params = {
-        if (memoIssueMstID != null) "MemoIssueMstID": memoIssueMstID,
-        if (srNo != null) "SrNo": srNo,
-        if (clarityCode != null) "ClarityCode": clarityCode,
-        if (charniCode != null) "CharniCode": charniCode,
-        if (shapeCode != null) "ShapeCode": shapeCode,
-        if (colorCode != null) "ColorCode": colorCode,
-        if (qualityCode != null) "QualityCode": qualityCode,
-        if (pcs != null) "Pcs": pcs,
-        if (wt != null) "Carats": wt,
-        if (rate != null) "RateRs": rate,
-        if (amount != null) "AmountRs": amount,
-        if (rateD != null || rate != null) "RateD": rateD ?? rate,
-        if (amountD != null || amount != null) "AmountD": amountD ?? amount,
-        if (penCarats != null) "PenCarats": penCarats,
-        if (type != null) "Type": type,
-        if (invNo != null && invNo.toString().isNotEmpty) "InvNo": invNo,
-        if (roughPurMstID != null) "RoughPurMstID": roughPurMstID is int ? roughPurMstID : (int.tryParse(roughPurMstID?.toString() ?? '') ?? roughPurMstID),
-        if (roughName != null) "RoughTypeCode": int.tryParse(roughName?.toString() ?? '') ?? 1,
-        // if (description != null) "Description": description,
-        "Rec": rec ?? 'N'
-      };
-
-      final response = await dio.put(
-          '${baseUrl}rough-entry/memo-issue-details/$id',
-          data: jsonEncode(params));
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Updated! $id $rec');
-        }
-      } else {
-        errorDialog(
-            messageText: 'Failed to Update Data: ${response.statusCode}');
-      }
-    } catch (error) {
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> _updateMemoRecRoughData(
-      {required id,
-      memoIssueDetId,
-      roughName,
-      wt,
-      recWt,
-      saleWt,
-      outWt,
-      lossWt,
-      totalWt,
-      description,
-      rate,
-      amount,
-      rateD,
-      amountD,
-      srNo,
-      type,
-      invNo,
-      roughPurMstID,
-      clarityCode,
-      charniCode,
-      shapeCode,
-      colorCode,
-      qualityCode,
-      pcs,
-      recPcs,
-      penCarats,
-      memoRecMstID}) async {
-    try {
-      final dio = ApiService.to.dio;
-
-      var params = {
-        if (memoRecMstID != null) "MemoRecMstID": memoRecMstID,
-        if (memoIssueDetId != null) "MemoIssueDetID": memoIssueDetId,
-        "SrNo": srNo,
-        if (clarityCode != null) "ClarityCode": clarityCode,
-        if (charniCode != null) "CharniCode": charniCode,
-        if (shapeCode != null) "ShapeCode": shapeCode,
-        if (colorCode != null) "ColorCode": colorCode,
-        if (qualityCode != null) "QualityCode": qualityCode,
-        if (pcs != null) "Pcs": pcs,
-        if (recPcs != null) "RecPcs": recPcs,
-        "Carats": wt,
-        "RecCarats": recWt,
-        if (saleWt != null) "SaleCarats": saleWt,
-        if (outWt != null) "OutCarats": outWt,
-        if (lossWt != null) "LossCarats": lossWt,
-        if (totalWt != null) "TotalCarats": totalWt,
-        "RateRs": rate,
-        "AmountRs": amount,
-        "RateD": rateD ?? rate,
-        "AmountD": amountD ?? amount,
-        if (penCarats != null) "PenCarats": penCarats,
-        "Type": type ?? "ROUGH",
-        if (invNo != null && invNo.toString().isNotEmpty) "InvNo": invNo,
-        if (roughPurMstID != null) "RoughPurMstID": roughPurMstID is int ? roughPurMstID : (int.tryParse(roughPurMstID?.toString() ?? '') ?? roughPurMstID),
-        "RoughTypeCode": int.tryParse(roughName?.toString() ?? '1') ?? 1,
-      };
-
-      final response = await dio.put(
-          '${baseUrl}rough-entry/memo-rec-details/$id',
-          data: jsonEncode(params));
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Updated!');
-        }
-      } else {
-        errorDialog(
-            messageText: 'Failed to Update Data: ${response.statusCode}');
-      }
-    } catch (error) {
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> _updatePurchaseRoughData({
-    required id,
-    roughName,
-    wt,
-    description,
-    rate,
-    amount,
-    srNo,
-    roughPurMstID,
-    roughQualityCode,
-    roughCharniCode,
-    pc,
-    rateRs,
-    amtRs,
-    rateDollar,
-    amtDollar,
-    site,
-  }) async {
-    try {
-      final dio = ApiService.to.dio;
-
-      var params = {
-        "RoughPurMstID": roughPurMstID is int ? roughPurMstID : (int.tryParse(roughPurMstID?.toString() ?? '') ?? roughPurMstID),
-        "Srno": srNo is int ? srNo : (int.tryParse(srNo?.toString() ?? '') ?? 1),
-        "RoughTypeCode": roughName is int ? roughName : (int.tryParse(roughName?.toString() ?? '') ?? 1),
-        if (roughQualityCode != null) "RoughQualityCode": roughQualityCode is int ? roughQualityCode : (int.tryParse(roughQualityCode.toString()) ?? roughQualityCode),
-        if (roughCharniCode != null) "RoughCharniCode": roughCharniCode is int ? roughCharniCode : (int.tryParse(roughCharniCode.toString()) ?? roughCharniCode),
-        if (pc != null) "Pc": pc is int ? pc : (int.tryParse(pc.toString()) ?? 0),
-        "Wt": wt is num ? wt : (double.tryParse(wt?.toString() ?? '0') ?? 0.0),
-        "RateRs": rateRs is num ? rateRs : (double.tryParse((rateRs ?? rate)?.toString() ?? '0') ?? 0.0),
-        "AmtRs": amtRs is num ? amtRs : (double.tryParse((amtRs ?? amount)?.toString() ?? '0') ?? 0.0),
-        "RateDollar": rateDollar is num ? rateDollar : (double.tryParse((rateDollar ?? rate)?.toString() ?? '0') ?? 0.0),
-        "AmtDollar": amtDollar is num ? amtDollar : (double.tryParse((amtDollar ?? amount)?.toString() ?? '0') ?? 0.0),
-        if (site != null && site.toString().isNotEmpty) "Site": site.toString(),
-        if (description != null && description.toString().isNotEmpty) "Description": description.toString(),
-      };
-
-      final response = await dio.put('${baseUrl}rough-entry/rough-details/$id',
-          data: jsonEncode(params));
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Updated!');
-        }
-      } else {
-        errorDialog(
-            messageText: 'Failed to Update Data: ${response.statusCode}');
-      }
-    } catch (error) {
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> deletePurchaseRoughData({required id}) async {
-    try {
-      isDeleteLoading.value = true;
-      final dio = ApiService.to.dio;
-
-      final response =
-          await dio.delete('${baseUrl}rough-entry/rough-details/$id');
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Deleted!');
-        }
-        await getPurchaseDetailsData(force: true);
-        isDeleteLoading.value = false;
-      } else {
-        isDeleteLoading.value = false;
-        errorDialog(
-            messageText: 'Failed to Delete Data: ${response.statusCode}');
-      }
-    } catch (error) {
-      isDeleteLoading.value = false;
-
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> deleteSaleRoughData({required id}) async {
-    try {
-      isDeleteLoading.value = true;
-
-      final dio = ApiService.to.dio;
-
-      final response =
-          await dio.delete('${baseUrl}rough-entry/sale-details/$id');
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Deleted!');
-        }
-        await getSaleDetailsData();
-        isDeleteLoading.value = false;
-      } else {
-        isDeleteLoading.value = false;
-
-        errorDialog(
-            messageText: 'Failed to Delete Data: ${response.statusCode}');
-      }
-    } catch (error) {
-      isDeleteLoading.value = false;
-
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> deleteMemoIssueRoughData({required id}) async {
-    try {
-      isDeleteLoading.value = true;
-
-      final dio = ApiService.to.dio;
-
-      final response =
-          await dio.delete('${baseUrl}rough-entry/memo-issue-details/$id');
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Deleted!');
-        }
-        await getMemoIssueDetailsData(force: true);
-        isDeleteLoading.value = false;
-      } else {
-        isDeleteLoading.value = false;
-
-        errorDialog(
-            messageText: 'Failed to Delete Data: ${response.statusCode}');
-      }
-    } catch (error) {
-      isDeleteLoading.value = false;
-
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> deleteMemoRecRoughData({required id, detId}) async {
-    try {
-      isDeleteLoading.value = true;
-
-      final dio = ApiService.to.dio;
-
-      final response =
-          await dio.delete('${baseUrl}rough-entry/memo-rec-details/$id');
-
-      if (response.statusCode == 200) {
-        _updateMemoIssueRoughData(id: detId, rec: 'N');
-        if (kDebugMode) {
-          print('Deleted!');
-        }
-        await getMemoRecDetailsData(force: true);
-        await getMemoIssueDetailsData(force: true);
-        isDeleteLoading.value = false;
-      } else {
-        isDeleteLoading.value = false;
-        errorDialog(
-            messageText: 'Failed to Delete Data: ${response.statusCode}');
-      }
-    } catch (error) {
-      isDeleteLoading.value = false;
-
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
     }
   }
 
@@ -9424,39 +7884,23 @@ class DefaultController extends GetxController {
     }
   }
 
+  /// Deletes a Rough Purchase with its items and its party ledger rows in ONE
+  /// server transaction (before, the ledger rows were left behind).
   Future<bool> deletePurchaseData(
       {required int id, required List entries}) async {
     try {
       isDeleteLoading.value = true;
-      // await deletePurchaseCreditDebitDetails(id: id);
-      final dio = ApiService.to.dio;
-
-      final response = await dio.delete('${baseUrl}rough-entry/purchase/$id');
+      final response =
+          await ApiService.to.dio.delete('${baseUrl}rough-entry/purchase/full/$id');
 
       if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Deleted!');
-        }
-
-        // Ensure entries is not null and is a list
-        if (entries.isNotEmpty) {
-          // Ensure we create a list of Future<void> for Future.wait to process
-          await Future.wait(
-            entries.map((value) {
-              return deletePurchaseRoughData(id: value['id']);
-            }).toList(),
-          );
-        }
-
-        // After processing deletion, refresh data and stop loading
         await getPurchaseDetailsData(force: true);
         await getPurchaseData(force: true);
-        // await getCreditDebitData();
-        // await getOutstandingPurchaseSaleDetails();
-        // await getPendingPaymentData();
+        await getCreditDebitData(force: true);
+        await getOutstandingPurchaseSaleDetails(force: true);
+        await getPendingPaymentData(force: true);
         isDeleteLoading.value = false;
-
-        successDialog(messageText: response.data['message']);
+        successDialog(messageText: response.data['message'] ?? 'Purchase deleted');
         return true;
       } else {
         isDeleteLoading.value = false;
@@ -9466,7 +7910,7 @@ class DefaultController extends GetxController {
       }
     } catch (error) {
       isDeleteLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred.');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred.'));
       if (kDebugMode) {
         log('$error');
       }
@@ -9510,81 +7954,18 @@ class DefaultController extends GetxController {
     }
   }
 
-  Future<void> deleteSaleData({required int id, required List entries}) async {
-    try {
-      isDeleteLoading.value = true;
-      await deleteSaleCreditDebitDetails(id: id);
-      final dio = ApiService.to.dio;
-
-      final response =
-          await dio.delete('${baseUrl}rough-entry/polish-sale/$id');
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Deleted!');
-        }
-
-        // Ensure entries is not null and is a list
-        if (entries.isNotEmpty) {
-          // Ensure we create a list of Future<void> for Future.wait to process
-          await Future.wait(
-            entries.map((value) {
-              return deleteSaleRoughData(id: value['id']);
-            }).toList(),
-          );
-        }
-
-        // After processing deletion, refresh data and stop loading
-        await getSaleDetailsData();
-        await getSaleData();
-        await getCreditDebitData();
-        await getOutstandingPurchaseSaleDetails();
-        await getPendingPaymentData();
-        isDeleteLoading.value = false;
-        successDialog(messageText: response.data['message']);
-      } else {
-        isDeleteLoading.value = false;
-        errorDialog(
-            messageText: 'Failed to Delete Data: ${response.statusCode}');
-      }
-    } catch (error) {
-      isDeleteLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
+  /// Deletes the memo with all its items in ONE server transaction.
   Future<bool> deleteMemoIssueData(
       {required int id, required List entries}) async {
     try {
       isDeleteLoading.value = true;
-
-      final dio = ApiService.to.dio;
-
-      final response = await dio.delete('${baseUrl}rough-entry/memo-issue/$id');
+      final response =
+          await ApiService.to.dio.delete('${baseUrl}rough-entry/memo-issue/full/$id');
 
       if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Deleted!');
-        }
-
-        // Ensure entries is not null and is a list
-        if (entries.isNotEmpty) {
-          // Ensure we create a list of Future<void> for Future.wait to process
-          await Future.wait(
-            entries.map((value) {
-              return deleteMemoIssueRoughData(id: value['id']);
-            }).toList(),
-          );
-        }
-
-        // After processing deletion, refresh data and stop loading
         await getMemoIssueDetailsData(force: true);
         await getMemoIssueData(force: true);
         isDeleteLoading.value = false;
-
         successDialog(messageText: response.data['message']);
         return true;
       } else {
@@ -9595,7 +7976,7 @@ class DefaultController extends GetxController {
       }
     } catch (error) {
       isDeleteLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred.');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred.'));
       if (kDebugMode) {
         log('$error');
       }
@@ -9603,37 +7984,19 @@ class DefaultController extends GetxController {
     }
   }
 
+  /// Deletes the memo with all its items in ONE server transaction.
   Future<bool> deleteMemoRecData(
       {required int id, required List entries}) async {
     try {
       isDeleteLoading.value = true;
-
-      final dio = ApiService.to.dio;
-
-      final response = await dio.delete('${baseUrl}rough-entry/memo-rec/$id');
+      final response =
+          await ApiService.to.dio.delete('${baseUrl}rough-entry/memo-rec/full/$id');
 
       if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Deleted!');
-        }
-
-        // Ensure entries is not null and is a list
-        if (entries.isNotEmpty) {
-          // Ensure we create a list of Future<void> for Future.wait to process
-          await Future.wait(
-            entries.map((value) {
-              return deleteMemoRecRoughData(
-                  id: value['id'], detId: value['detId']);
-            }).toList(),
-          );
-        }
-
-        // After processing deletion, refresh data and stop loading
         await getMemoRecDetailsData(force: true);
         await getMemoIssueDetailsData(force: true);
         await getMemoRecData(force: true);
         isDeleteLoading.value = false;
-
         successDialog(messageText: response.data['message']);
         return true;
       } else {
@@ -9644,7 +8007,7 @@ class DefaultController extends GetxController {
       }
     } catch (error) {
       isDeleteLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred.');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred.'));
       if (kDebugMode) {
         log('$error');
       }
@@ -9652,177 +8015,27 @@ class DefaultController extends GetxController {
     }
   }
 
+  /// Deletes a Payment voucher with all its ledger / detail rows in one
+  /// server transaction.
   Future<void> deletePaymentData({required int id}) async {
     try {
       isDeleteLoading.value = true;
-      await deletePaymentDetails(id: id);
-      final dio = ApiService.to.dio;
-
       final response =
-          await dio.delete('${baseUrl}rough-entry/payment-mst/$id');
+          await ApiService.to.dio.delete('${baseUrl}rough-entry/payment-mst/full/$id');
 
+      isDeleteLoading.value = false;
       if (response.statusCode == 200) {
         paymentMstList.value =
             paymentMstList.where((e) => e.paymentMstID != id).toList();
-        if (kDebugMode) {
-          print('Deleted!');
-        }
-
-        // Ensure entries is not null and is a list
-        // if (entries.isNotEmpty) {
-        //   // Ensure we create a list of Future<void> for Future.wait to process
-        //   await Future.wait(
-        //     entries.map((value) {
-        //       return deleteMemoRecRoughData(
-        //           id: value['id'], detId: value['detId']);
-        //     }).toList(),
-        //   );
-        // }
-
-        // After processing deletion, refresh data and stop loading
-        // Reload from the server (force) so the Payment search list and
-        // balances show the saved record - without force these returned early
-        // because the lists were already loaded.
+        successDialog(messageText: response.data['message'] ?? 'Payment Deleted Successfully');
         await _refreshPaymentLists();
-
-        isDeleteLoading.value = false;
-
-        successDialog(messageText: response.data['message']);
       } else {
-        isDeleteLoading.value = false;
         errorDialog(
             messageText: 'Failed to Delete Data: ${response.statusCode}');
       }
     } catch (error) {
       isDeleteLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> deletePaymentDetails({required int id}) async {
-    try {
-      // isDeleteLoading.value = true;
-
-      final dio = ApiService.to.dio;
-
-      final response =
-          await dio.delete('${baseUrl}delete/payment-details?paymentMstId=$id');
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Deleted!');
-        }
-
-        // Ensure entries is not null and is a list
-        // if (entries.isNotEmpty) {
-        //   // Ensure we create a list of Future<void> for Future.wait to process
-        //   await Future.wait(
-        //     entries.map((value) {
-        //       return deleteMemoIssueRoughData(id: value['id']);
-        //     }).toList(),
-        //   );
-        // }
-
-        // After processing deletion, refresh data and stop loading
-        await getCreditDebitData();
-        await getPaymentDetData();
-        await getPaymentDetAccData();
-        await getPaymentMstData();
-        // isDeleteLoading.value = false;
-        log(response.data['message']);
-      } else {
-        // isDeleteLoading.value = false;
-        errorDialog(
-            messageText: 'Failed to Delete Data: ${response.statusCode}');
-      }
-    } catch (error) {
-      // isDeleteLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> deletePurchaseCreditDebitDetails({required int id}) async {
-    try {
-      // isDeleteLoading.value = true;
-
-      final dio = ApiService.to.dio;
-
-      final response = await dio
-          .delete('${baseUrl}delete/purchase-credit-debit-details?mstId=$id');
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Deleted!');
-        }
-
-        // Ensure entries is not null and is a list
-        // if (entries.isNotEmpty) {
-        //   // Ensure we create a list of Future<void> for Future.wait to process
-        //   await Future.wait(
-        //     entries.map((value) {
-        //       return deleteMemoIssueRoughData(id: value['id']);
-        //     }).toList(),
-        //   );
-        // }
-
-        // After processing deletion, refresh data and stop loading
-        await getCreditDebitData();
-        log(response.data['message']);
-      } else {
-        // isDeleteLoading.value = false;
-        errorDialog(
-            messageText: 'Failed to Delete Data: ${response.statusCode}');
-      }
-    } catch (error) {
-      // isDeleteLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred.');
-      if (kDebugMode) {
-        log('$error');
-      }
-    }
-  }
-
-  Future<void> deleteSaleCreditDebitDetails({required int id}) async {
-    try {
-      // isDeleteLoading.value = true;
-
-      final dio = ApiService.to.dio;
-
-      final response = await dio
-          .delete('${baseUrl}delete/sale-credit-debit-details?mstId=$id');
-
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          print('Deleted!');
-        }
-
-        // Ensure entries is not null and is a list
-        // if (entries.isNotEmpty) {
-        //   // Ensure we create a list of Future<void> for Future.wait to process
-        //   await Future.wait(
-        //     entries.map((value) {
-        //       return deleteMemoIssueRoughData(id: value['id']);
-        //     }).toList(),
-        //   );
-        // }
-
-        // After processing deletion, refresh data and stop loading
-        await getCreditDebitData();
-        log(response.data['message']);
-      } else {
-        // isDeleteLoading.value = false;
-        errorDialog(
-            messageText: 'Failed to Delete Data: ${response.statusCode}');
-      }
-    } catch (error) {
-      // isDeleteLoading.value = false;
-      errorDialog(messageText: 'An unexpected error occurred.');
+      errorDialog(messageText: _apiErrorMessage(error, 'An unexpected error occurred.'));
       if (kDebugMode) {
         log('$error');
       }
@@ -9983,7 +8196,8 @@ class DefaultController extends GetxController {
         required List entries}) async {
     try {
       isLoading.value = true;
-      await deletePurchaseCreditDebitDetails(id: id);
+      // (Removed: this deleted the ledger rows of the PURCHASE with the same
+      // id as this assort - Rough Assort has no ledger rows of its own.)
       final dio = ApiService.to.dio;
 
       var params = {
@@ -9991,8 +8205,8 @@ class DefaultController extends GetxController {
         "Wt": wt,
         "AssortWt": assWt,
         "PendingWt": penWt,
-        "LogID": 0,
-        "PCID": "TESTFROMWEB",
+        "LogID": currentUserId.value,
+        "PCID": _savePcId,
         "Ever": 0,
         "SDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
         "CompanyCode": companyCode.value,
@@ -10144,8 +8358,8 @@ class DefaultController extends GetxController {
         "Wt": wt,
         "AssortWt": assWt,
         "PendingWt": penWt,
-        "LogID": 0,
-        "PCID": "TESTFROMWEB",
+        "LogID": currentUserId.value,
+        "PCID": _savePcId,
         "Ever": 0,
         "SDate": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
         "CompanyCode": companyCode.value,
@@ -10293,4 +8507,15 @@ class DefaultController extends GetxController {
       }
     }
   }
+}
+
+/// What the logged-in user may do on one screen (from menu rights).
+class ScreenRights {
+  const ScreenRights({this.canAdd = true, this.canEdit = true, this.canDelete = true});
+  final bool canAdd;
+  final bool canEdit;
+  final bool canDelete;
+
+  /// Save = Edit right when editing a record, Add right for a new one.
+  bool canSave(bool isEdit) => isEdit ? canEdit : canAdd;
 }

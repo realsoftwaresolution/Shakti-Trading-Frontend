@@ -32,6 +32,11 @@ class MemoIssFormScreen extends StatefulWidget {
 }
 
 class MemoIssFormScreenState extends State<MemoIssFormScreen> {
+  /// Add / Edit / Delete rights of this screen (from the user's menu rights)
+  ScreenRights get _rights => defaultController.screenRights(const [
+        'frmmemoissueform',
+        'memo issue',
+      ]);
   // Master Header Controllers
   final TextEditingController idController = TextEditingController(text: '0');
   final TextEditingController dateController = TextEditingController();
@@ -305,11 +310,11 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
       return KeyEventResult.ignored;
     };
 
-    memoIssueDataGridSource.value = defaultController.memoIssueList;
+    memoIssueDataGridSource.value = List.of(defaultController.memoIssueList);
 
     _listWorker = ever(defaultController.memoIssueList, (list) {
       if (mounted) {
-        memoIssueDataGridSource.value = list;
+        memoIssueDataGridSource.value = List.of(list);
         setState(() {});
       }
     });
@@ -554,6 +559,10 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
   // ==================== WORKFLOW & CRUD METHODS ====================
 
   void _enableFields({bool? needFocus}) {
+    if (!_rights.canAdd) {
+      infoDialog(messageText: 'You do not have permission to add a new entry here.');
+      return;
+    }
     setState(() {
       _isEnabled = true;
       _isFromEdit = false;
@@ -703,6 +712,38 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
       return;
     }
 
+    // ROUGH must come from a purchase invoice - without it the item is not
+    // linked to stock and nothing stops selling more than was bought.
+    // (An old saved row that never had an invoice may be edited as it is.)
+    if (isRough) {
+      final String inv = _selectedItemInvNo.value.trim().isNotEmpty
+          ? _selectedItemInvNo.value.trim()
+          : invNoItemController.text.trim();
+      final Map? editing = (_editingEntryIndex != null &&
+              _editingEntryIndex! >= 0 &&
+              _editingEntryIndex! < entries.length)
+          ? entries[_editingEntryIndex!]
+          : null;
+      final bool oldRowWithoutInvoice = inv.isEmpty &&
+          editing != null &&
+          (editing['id']?.toString() ?? '').isNotEmpty &&
+          (editing['invNo']?.toString().trim() ?? '').isEmpty;
+      if (!oldRowWithoutInvoice) {
+        if (inv.isEmpty) {
+          infoDialog(messageText: 'Please select Invoice for ROUGH item');
+          _itemInvFocus.requestFocus();
+          return;
+        }
+        if (defaultController.purchaseDataList
+                .firstWhereOrNull((p) => p.invoiceNo?.trim() == inv) ==
+            null) {
+          infoDialog(messageText: 'Invoice $inv not found in purchases');
+          _itemInvFocus.requestFocus();
+          return;
+        }
+      }
+    }
+
     final double wt = double.tryParse(wtController.text) ?? 0.0;
     if (wt <= 0) {
       infoDialog(messageText: 'Please enter valid Weight');
@@ -810,42 +851,50 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
   void _deleteEntry(int index) {
     if (!_isEnabled) return;
     if (index < 0 || index >= entries.length) return;
-    if (_isFromEdit) {
-      if (entries.length == 1) {
-        infoDialog(messageText: 'Cannot delete the only remaining memo item.');
-        return;
+    if (_isFromEdit && entries.length == 1) {
+      infoDialog(messageText: 'Cannot delete the only remaining memo item.');
+      return;
+    }
+    // Only removed from the list here. When editing, the item is deleted in the
+    // database when the memo is saved (all together), so Cancel keeps it.
+    setState(() {
+      if (_editingEntryIndex == index) {
+        _clearEntryInputs();
+      } else if (_editingEntryIndex != null && _editingEntryIndex! > index) {
+        _editingEntryIndex = _editingEntryIndex! - 1;
       }
-      final entryId = int.tryParse(entries[index]['id'] ?? '');
-      if (entryId != null) {
-        defaultController.deleteMemoIssueRoughData(id: entryId).then((_) {
-          setState(() {
-            if (_editingEntryIndex == index) {
-              _clearEntryInputs();
-            } else if (_editingEntryIndex != null && _editingEntryIndex! > index) {
-              _editingEntryIndex = _editingEntryIndex! - 1;
-            }
-            entries.removeAt(index);
-          });
-        });
-      } else {
-        setState(() {
-          if (_editingEntryIndex == index) {
-            _clearEntryInputs();
-          } else if (_editingEntryIndex != null && _editingEntryIndex! > index) {
-            _editingEntryIndex = _editingEntryIndex! - 1;
-          }
-          entries.removeAt(index);
-        });
-      }
+      entries.removeAt(index);
+    });
+  }
+
+
+  // Pen Wt = stock the selected From Manager still has in this invoice
+  // (+ rough type of the selected quality / charni) - same as the server check.
+  int _penWtRequest = 0;
+  Future<void> _refreshRoughPenWt() async {
+    if (_selectedItemType.value != 'ROUGH') return;
+    final String inv = _selectedItemInvNo.value.trim().isNotEmpty
+        ? _selectedItemInvNo.value.trim()
+        : invNoItemController.text.trim();
+    if (inv.isEmpty) {
+      penWtController.clear();
+      return;
+    }
+    final int request = ++_penWtRequest;
+    final double? left = await defaultController.roughStockLeft(
+      managerId: _selectedFromManagerId.value,
+      invoiceNo: inv,
+      qualityCode: _resolveQualityCode(_selectedQuality.value),
+      charniCode: _resolveCharniCode(_selectedCharni.value),
+      entries: entries,
+      editingIndex: _editingEntryIndex,
+      excludeMemoIssueId: _isFromEdit ? int.tryParse(idController.text.trim()) : null,
+    );
+    if (!mounted || request != _penWtRequest) return;
+    if (left == null) {
+      penWtController.clear(); // not loaded - the server still checks on save
     } else {
-      setState(() {
-        if (_editingEntryIndex == index) {
-          _clearEntryInputs();
-        } else if (_editingEntryIndex != null && _editingEntryIndex! > index) {
-          _editingEntryIndex = _editingEntryIndex! - 1;
-        }
-        entries.removeAt(index);
-      });
+      penWtController.text = left.toStringAsFixed(3);
     }
   }
 
@@ -876,10 +925,15 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
       penWtController.text = entry['penWt']?.toString() ?? '';
       descripController.text = entry['description']?.toString() ?? '';
     });
+    _refreshRoughPenWt();
     _typeFocus.requestFocus();
   }
 
   Future<void> _handleSave() async {
+    if (!_rights.canSave(_isFromEdit)) {
+      infoDialog(messageText: 'You do not have permission to save this entry.');
+      return;
+    }
     if (!_isEnabled) return;
 
     if (_selectedTypeParty.value.isEmpty) {
@@ -946,6 +1000,10 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
   }
 
   Future<void> _handleDelete() async {
+    if (!_rights.canDelete) {
+      infoDialog(messageText: 'You do not have permission to delete here.');
+      return;
+    }
     if (!_isEnabled || !_isFromEdit) return;
     final bool ok = await defaultController.deleteMemoIssueData(
       id: selectedMemoIssueMstID.value,
@@ -1116,7 +1174,7 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
         return invoiceDate.isAfter(fromDate!) &&
             invoiceDate.isBefore(toDate!.add(const Duration(days: 1)));
       }).toList();
-      memoIssueDataGridSource.value = filteredDataGridSource;
+      memoIssueDataGridSource.value = List.of(filteredDataGridSource);
       _searchKeyBoardFocus.requestFocus();
     } else {
       infoDialog(messageText: 'Please select both From Date and To Date');
@@ -1124,7 +1182,7 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
   }
 
   void _removeDateFilter() {
-    memoIssueDataGridSource.value = defaultController.memoIssueList;
+    memoIssueDataGridSource.value = List.of(defaultController.memoIssueList);
     toDateController.clear();
     fromDateController.clear();
     fromDate = null;
@@ -1922,6 +1980,7 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
                     prefixIcon: const Icon(Icons.person_rounded, size: 16),
                     onChanged: (val) {
                       _selectedFromManagerId.value = val;
+                      _refreshRoughPenWt();
                     },
                   ),
                 );
@@ -2303,13 +2362,8 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
                         if (val != null && val.isNotEmpty) {
                           _selectedItemInvNo.value = val;
                           invNoItemController.text = val;
-                          final matchingPurchase = defaultController.purchaseDataList.firstWhereOrNull(
-                            (p) => p.invoiceNo?.trim() == val.trim(),
-                          );
-                          if (matchingPurchase != null) {
-                            final double tWeight = double.tryParse(matchingPurchase.tWeight?.toString() ?? '0') ?? 0.0;
-                            penWtController.text = tWeight.toStringAsFixed(3);
-                          }
+                          // Pen Wt = stock left for the manager (not the invoice total)
+                          _refreshRoughPenWt();
                         } else {
                           _selectedItemInvNo.value = '';
                           invNoItemController.clear();
@@ -2360,7 +2414,10 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
                       hintText: 'Charni',
                       isEnabled: _isEnabled,
                       onChanged: (val) {
-                        if (val != null) _selectedCharni.value = val;
+                        if (val != null) {
+                          _selectedCharni.value = val;
+                          _refreshRoughPenWt();
+                        }
                       },
                     );
                   },
@@ -2380,7 +2437,10 @@ class MemoIssFormScreenState extends State<MemoIssFormScreen> {
                       hintText: 'Quality',
                       isEnabled: _isEnabled && isRough,
                       onChanged: (val) {
-                        if (val != null) _selectedQuality.value = val;
+                        if (val != null) {
+                          _selectedQuality.value = val;
+                          _refreshRoughPenWt();
+                        }
                       },
                     );
                   },

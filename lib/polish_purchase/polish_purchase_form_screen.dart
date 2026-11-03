@@ -26,6 +26,11 @@ class PolishPurchaseFormScreen extends StatefulWidget {
 }
 
 class PolishPurchaseFormScreenState extends State<PolishPurchaseFormScreen> {
+  /// Add / Edit / Delete rights of this screen (from the user's menu rights)
+  ScreenRights get _rights => defaultController.screenRights(const [
+        'frmpolishpurchaseform',
+        'polish purchase',
+      ]);
   // ==================== MASTER HEADER CONTROLLERS ====================
   final TextEditingController idController = TextEditingController();
   final TextEditingController crIdController = TextEditingController();
@@ -681,6 +686,10 @@ class PolishPurchaseFormScreenState extends State<PolishPurchaseFormScreen> {
   }
 
   void _enableFields({bool needFocus = true}) {
+    if (!_rights.canAdd) {
+      infoDialog(messageText: 'You do not have permission to add a new entry here.');
+      return;
+    }
     if (_isFromEdit) {
       _handleCancel();
     }
@@ -808,11 +817,6 @@ class PolishPurchaseFormScreenState extends State<PolishPurchaseFormScreen> {
   Future<void> _removeEntry(int index) async {
     if (!_isEnabled) return;
     if (index < 0 || index >= entries.length) return;
-    final item = entries[index];
-    final dynamic rawDetId = item['polishPurDetID'];
-    final int detId = (rawDetId is int)
-        ? rawDetId
-        : (int.tryParse(rawDetId?.toString() ?? '0') ?? 0);
 
     Get.defaultDialog(
       title: 'Confirm Delete',
@@ -823,10 +827,8 @@ class PolishPurchaseFormScreenState extends State<PolishPurchaseFormScreen> {
       buttonColor: AppColors.danger,
       onConfirm: () async {
         Get.back();
-        if (detId > 0) {
-          final ok = await defaultController.deletePolishPurchaseDetail(detId);
-          if (ok != true) return;
-        }
+        // Only removed from the list here. When editing, the database is
+        // changed when the purchase is saved (all together), so Cancel keeps it.
         setState(() {
           entries.removeAt(index);
           for (int i = 0; i < entries.length; i++) {
@@ -889,6 +891,10 @@ class PolishPurchaseFormScreenState extends State<PolishPurchaseFormScreen> {
 
   // ==================== SAVE / DELETE / CANCEL ====================
   Future<void> _handleSave() async {
+    if (!_rights.canSave(_isFromEdit)) {
+      infoDialog(messageText: 'You do not have permission to save this entry.');
+      return;
+    }
     if (!_isEnabled) return;
     if (crIdController.text.trim().isEmpty) {
       infoDialog(
@@ -1065,6 +1071,10 @@ class PolishPurchaseFormScreenState extends State<PolishPurchaseFormScreen> {
   }
 
   Future<void> _handleDelete() async {
+    if (!_rights.canDelete) {
+      infoDialog(messageText: 'You do not have permission to delete here.');
+      return;
+    }
     if (!_isFromEdit || selectedPolishPurMstID.value <= 0) return;
     Get.defaultDialog(
       title: 'Confirm Delete',

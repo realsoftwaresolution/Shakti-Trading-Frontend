@@ -25,6 +25,11 @@ class PartyForm extends StatefulWidget {
 }
 
 class PartyFormState extends State<PartyForm> {
+  /// Add / Edit / Delete rights of this screen (from the user's menu rights)
+  ScreenRights get _rights => defaultController.screenRights(const [
+        'frmpartyform',
+        'party',
+      ]);
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final DefaultController defaultController = Get.find<DefaultController>();
   final DataGridController _dataGridController = DataGridController();
@@ -106,11 +111,11 @@ class PartyFormState extends State<PartyForm> {
   @override
   void initState() {
     super.initState();
-    partyGridList.value = defaultController.partyMstList;
+    partyGridList.value = List.of(defaultController.partyMstList);
 
     _listWorker = ever(defaultController.partyMstList, (list) {
       if (mounted) {
-        partyGridList.value = list;
+        partyGridList.value = List.of(list);
         setState(() {});
       }
     });
@@ -204,7 +209,7 @@ class PartyFormState extends State<PartyForm> {
 
   void _filterParties(String query) {
     if (query.trim().isEmpty) {
-      partyGridList.value = defaultController.partyMstList;
+      partyGridList.value = List.of(defaultController.partyMstList);
     } else {
       final q = query.toLowerCase().trim();
       partyGridList.value = defaultController.partyMstList.where((p) {
@@ -218,6 +223,10 @@ class PartyFormState extends State<PartyForm> {
   }
 
   void _enableFields({bool needFocus = true}) {
+    if (!_rights.canAdd) {
+      infoDialog(messageText: 'You do not have permission to add a new entry here.');
+      return;
+    }
     setState(() {
       _isEnabled = true;
       _isFromEdit = false;
@@ -272,6 +281,10 @@ class PartyFormState extends State<PartyForm> {
   }
 
   Future<void> _handleSave() async {
+    if (!_rights.canSave(_isFromEdit)) {
+      infoDialog(messageText: 'You do not have permission to save this entry.');
+      return;
+    }
     if (!_isEnabled) return;
 
     if (_nameController.text.trim().isEmpty) {
@@ -359,15 +372,19 @@ class PartyFormState extends State<PartyForm> {
 
     await defaultController.getPartyData(force: true);
     _clearFormFields();
-    partyGridList.value = defaultController.partyMstList;
+    partyGridList.value = List.of(defaultController.partyMstList);
   }
 
   Future<void> _handleDelete() async {
+    if (!_rights.canDelete) {
+      infoDialog(messageText: 'You do not have permission to delete here.');
+      return;
+    }
     if (!_isFromEdit || selectedPartyMstID.value == 0) return;
     await defaultController.deletePartyData(id: selectedPartyMstID.value);
     await defaultController.getPartyData(force: true);
     _clearFormFields();
-    partyGridList.value = defaultController.partyMstList;
+    partyGridList.value = List.of(defaultController.partyMstList);
   }
 
   void _loadPartyFromRow(DataGridRow row) {
@@ -1414,6 +1431,17 @@ class PartyFormState extends State<PartyForm> {
         rowHeight: 30,
         headerRowHeight: 36,
         selectionMode: SelectionMode.single,
+        // Clicking the row that is already selected does not fire
+        // onSelectionChanged, so load that row again here.
+        onCellTap: (details) {
+          final int dataRowIndex = details.rowColumnIndex.rowIndex - 1;
+          final selected = _dataGridController.selectedRow;
+          if (dataRowIndex >= 0 &&
+              selected != null &&
+              _dataGridController.selectedIndex == dataRowIndex) {
+            _loadPartyFromRow(selected);
+          }
+        },
         onSelectionChanged: (addedRows, _) {
           if (addedRows.isNotEmpty) {
             _loadPartyFromRow(addedRows.first);

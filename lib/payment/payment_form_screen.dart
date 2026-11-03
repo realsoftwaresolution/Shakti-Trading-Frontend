@@ -46,6 +46,11 @@ class PaymentFormScreen extends StatefulWidget {
 }
 
 class PaymentFormScreenState extends State<PaymentFormScreen> {
+  /// Add / Edit / Delete rights of this screen (from the user's menu rights)
+  ScreenRights get _rights => defaultController.screenRights(const [
+        'frmpaymentform',
+        'payment',
+      ]);
   // Text Controllers
   final TextEditingController invNoController = TextEditingController();
   final TextEditingController dateController = TextEditingController();
@@ -258,6 +263,10 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
   // ==================== WORKFLOW & CRUD METHODS ====================
 
   void _enableFields({bool? needFocus}) {
+    if (!_rights.canAdd) {
+      infoDialog(messageText: 'You do not have permission to add a new entry here.');
+      return;
+    }
     setState(() {
       _isEnabled = true;
       _isCreditEnabled = true;
@@ -319,6 +328,10 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
   }
 
   Future<void> _handleSave() async {
+    if (!_rights.canSave(_isFromEdit)) {
+      infoDialog(messageText: 'You do not have permission to save this entry.');
+      return;
+    }
     if (!_isEnabled) return;
 
     if (_isFromEdit) {
@@ -387,6 +400,10 @@ class PaymentFormScreenState extends State<PaymentFormScreen> {
   }
 
   Future<void> _handleDelete() async {
+    if (!_rights.canDelete) {
+      infoDialog(messageText: 'You do not have permission to delete here.');
+      return;
+    }
     if (!_isEnabled || !_isFromEdit) return;
     await defaultController.deletePaymentData(id: selectedPaymentMstID.value);
     _handleCancel();

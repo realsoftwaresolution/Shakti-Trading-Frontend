@@ -24,6 +24,13 @@ class PolishTypeFormScreen extends StatefulWidget {
 }
 
 class PolishTypeFormScreenState extends State<PolishTypeFormScreen> {
+  /// Add / Edit / Delete rights of this screen (from the user's menu rights)
+  ScreenRights get _rights => defaultController.screenRights(const [
+        'frmpolishtype',
+        'polish type',
+        'polish type mst',
+        'polish type master',
+      ]);
   final DefaultController defaultController = Get.find<DefaultController>();
   final DataGridController _dataGridController = DataGridController();
 
@@ -74,6 +81,10 @@ class PolishTypeFormScreenState extends State<PolishTypeFormScreen> {
   }
 
   Future<void> _enableFields({bool needFocus = true}) async {
+    if (!_rights.canAdd) {
+      infoDialog(messageText: 'You do not have permission to add a new entry here.');
+      return;
+    }
     setState(() {
       _isEnabled = true;
       _isFromEdit = false;
@@ -124,6 +135,10 @@ class PolishTypeFormScreenState extends State<PolishTypeFormScreen> {
   }
 
   Future<void> _handleSave() async {
+    if (!_rights.canSave(_isFromEdit)) {
+      infoDialog(messageText: 'You do not have permission to save this entry.');
+      return;
+    }
     if (!_isEnabled) return;
 
     final String name = _nameController.text.trim();
@@ -166,6 +181,10 @@ class PolishTypeFormScreenState extends State<PolishTypeFormScreen> {
   }
 
   Future<void> _handleDelete() async {
+    if (!_rights.canDelete) {
+      infoDialog(messageText: 'You do not have permission to delete here.');
+      return;
+    }
     if (!_isFromEdit) return;
 
     final dynamic targetId = _selectedPolishTypeMstId.value != 0

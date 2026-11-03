@@ -25,6 +25,15 @@ class AccTypeFormScreen extends StatefulWidget {
 }
 
 class AccTypeFormScreenState extends State<AccTypeFormScreen> {
+  /// Add / Edit / Delete rights of this screen (from the user's menu rights)
+  ScreenRights get _rights => defaultController.screenRights(const [
+        'frmacctype',
+        'frmtype',
+        'acc type',
+        'acc type mst',
+        'account type',
+        'type mst',
+      ]);
   final DefaultController defaultController = Get.find<DefaultController>();
   final DataGridController _dataGridController = DataGridController();
 
@@ -79,6 +88,10 @@ class AccTypeFormScreenState extends State<AccTypeFormScreen> {
   }
 
   Future<void> _enableFields({bool needFocus = true}) async {
+    if (!_rights.canAdd) {
+      infoDialog(messageText: 'You do not have permission to add a new entry here.');
+      return;
+    }
     setState(() {
       _isEnabled = true;
       _isFromEdit = false;
@@ -134,6 +147,10 @@ class AccTypeFormScreenState extends State<AccTypeFormScreen> {
   }
 
   Future<void> _handleSave() async {
+    if (!_rights.canSave(_isFromEdit)) {
+      infoDialog(messageText: 'You do not have permission to save this entry.');
+      return;
+    }
     if (!_isEnabled) return;
 
     final String name = _nameController.text.trim();
@@ -184,6 +201,10 @@ class AccTypeFormScreenState extends State<AccTypeFormScreen> {
   }
 
   Future<void> _handleDelete() async {
+    if (!_rights.canDelete) {
+      infoDialog(messageText: 'You do not have permission to delete here.');
+      return;
+    }
     if (!_isFromEdit) return;
 
     final int targetId = _selectedTypeCode.value;

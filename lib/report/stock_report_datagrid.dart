@@ -12,11 +12,14 @@ class StockReportDataGrid extends DataGridSource {
   StockReportDataGrid() {
     _dataGridRows = defaultController.roughModel.map<DataGridRow>((entry) {
       // Calculate 'Pur Wt' for the current roughTypeCode
-      double purWt = _calculatePurWt(entry.roughTypeCode!) + _calculateMemoRecWt(entry.roughTypeCode!);
+      // Stock = Purchase - Sale - Memo out - Loss  (same rule as the server
+      // stock check on Sale / Memo Issue). Memo out = memo items not returned
+      // yet (pending items fully, received items: issued - returned - loss).
+      double purWt = _calculatePurWt(entry.roughTypeCode!);
       double sellWt = _calculateSellWt(entry.roughTypeCode!);
-      double memoWt = _calculateMemoIssueWt(entry.roughTypeCode!);
+      double memoWt = _calculateMemoIssueWt(entry.roughTypeCode!) + _calculateMemoRecWt(entry.roughTypeCode!);
       double lossWt = _calculateLossWt(entry.roughTypeCode!);
-      double stockWt = (purWt + memoWt) - sellWt - lossWt;
+      double stockWt = purWt - sellWt - memoWt - lossWt;
 
       return DataGridRow(cells: [
         DataGridCell<String>(columnName: 'Rough', value: entry.roughTypeName),
@@ -61,12 +64,19 @@ class StockReportDataGrid extends DataGridSource {
     return totalWt;
   }
 
+  static double _toD(dynamic v) =>
+      v is num ? v.toDouble() : (double.tryParse(v?.toString() ?? '') ?? 0.0);
+
+  // Received memo items: the part that did not come back and was not lost
+  // (e.g. sold to the memo party) is still out of our stock.
   double _calculateMemoRecWt(int roughTypeCode) {
     final relevantDetails = defaultController.memoRecDetailsList
         .where((detail) => detail.roughTypeCode == roughTypeCode)
         .toList();
-    double totalWt =
-    relevantDetails.fold(0.0, (sum, detail) => sum + detail.carats!);
+    double totalWt = relevantDetails.fold(
+        0.0,
+        (sum, detail) =>
+            sum + (_toD(detail.carats) - _toD(detail.recCarats) - _toD(detail.lossCarats)));
 
     return totalWt;
   }
@@ -76,7 +86,7 @@ class StockReportDataGrid extends DataGridSource {
         .where((detail) => detail.roughTypeCode == roughTypeCode)
         .toList();
     double totalWt =
-    relevantDetails.fold(0.0, (sum, detail) => sum + detail.lossCarats!);
+    relevantDetails.fold(0.0, (sum, detail) => sum + _toD(detail.lossCarats));
 
     return totalWt;
   }

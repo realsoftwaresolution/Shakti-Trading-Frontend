@@ -25,6 +25,14 @@ class CompanyFormScreen extends StatefulWidget {
 }
 
 class CompanyFormScreenState extends State<CompanyFormScreen> {
+  /// Add / Edit / Delete rights of this screen (from the user's menu rights)
+  ScreenRights get _rights => defaultController.screenRights(const [
+        'frmcompanyform',
+        'frmcompany',
+        'company',
+        'company master',
+        'company mst',
+      ]);
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final DefaultController defaultController = Get.find<DefaultController>();
   final DataGridController _dataGridController = DataGridController();
@@ -229,6 +237,10 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
   }
 
   Future<void> _enableFields({bool needFocus = true}) async {
+    if (!_rights.canAdd) {
+      infoDialog(messageText: 'You do not have permission to add a new entry here.');
+      return;
+    }
     setState(() {
       _isEnabled = true;
       _isFromEdit = false;
@@ -366,6 +378,10 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
   }
 
   Future<void> _handleSave() async {
+    if (!_rights.canSave(_isFromEdit)) {
+      infoDialog(messageText: 'You do not have permission to save this entry.');
+      return;
+    }
     if (!_isEnabled) return;
 
     final String name = _nameController.text.trim();
@@ -451,6 +467,10 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
   }
 
   Future<void> _handleDelete() async {
+    if (!_rights.canDelete) {
+      infoDialog(messageText: 'You do not have permission to delete here.');
+      return;
+    }
     if (!_isFromEdit) return;
 
     final dynamic targetId = _selectedCompanyMstID.value != 0
@@ -1537,6 +1557,17 @@ class CompanyFormScreenState extends State<CompanyFormScreen> {
       rowHeight: 30,
       headerRowHeight: 36,
       selectionMode: SelectionMode.single,
+      // Clicking the row that is already selected does not fire
+      // onSelectionChanged, so load that row again here.
+      onCellTap: (details) {
+        final int dataRowIndex = details.rowColumnIndex.rowIndex - 1;
+        final selected = _dataGridController.selectedRow;
+        if (dataRowIndex >= 0 &&
+            selected != null &&
+            _dataGridController.selectedIndex == dataRowIndex) {
+          _loadCompanyFromRow(selected);
+        }
+      },
       onSelectionChanged: (addedRows, _) {
         if (addedRows.isNotEmpty) {
           _loadCompanyFromRow(addedRows.first);

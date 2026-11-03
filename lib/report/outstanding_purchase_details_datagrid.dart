@@ -308,22 +308,22 @@ class OutstandingPurchaseReportDataGridSource extends DataGridSource {
   // Fetch party code from memoIssueMstID
   int _getParty(String invNo) {
     final relevantDetails = defaultController.outstandingPurchaseSaleDetailsList
-        .firstWhere((detail) => detail.invNo == invNo);
-    return relevantDetails.partyCode!;
+        .firstWhereOrNull((detail) => detail.invNo == invNo);
+    return relevantDetails?.partyCode ?? 0;
   }
 
   // Fetch broker code from memoIssueMstID
   int _getBroker(String invNo) {
     final relevantDetails = defaultController.outstandingPurchaseSaleDetailsList
-        .firstWhere((detail) => detail.invNo == invNo);
-    return relevantDetails.orgBrokerCode!;
+        .firstWhereOrNull((detail) => detail.invNo == invNo);
+    return relevantDetails?.orgBrokerCode ?? 0;
   }
 
   // Fetch date from memoIssueMstID
   String _getDate(String invNo) {
     final relevantDetails = defaultController.outstandingPurchaseSaleDetailsList
-        .firstWhere((detail) => detail.invNo == invNo);
-    return relevantDetails.dueDate!;
+        .firstWhereOrNull((detail) => detail.invNo == invNo);
+    return relevantDetails?.dueDate ?? '';
   }
 
   @override

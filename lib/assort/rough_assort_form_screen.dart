@@ -25,6 +25,11 @@ class RoughAssortFormScreen extends StatefulWidget {
 }
 
 class RoughAssortFormScreenState extends State<RoughAssortFormScreen> {
+  /// Add / Edit / Delete rights of this screen (from the user's menu rights)
+  ScreenRights get _rights => defaultController.screenRights(const [
+        'rough assort',
+        'frmroughassortform',
+      ]);
   final TextEditingController wtController = TextEditingController();
   final TextEditingController rateController = TextEditingController();
   final TextEditingController amountController = TextEditingController();
@@ -119,6 +124,10 @@ class RoughAssortFormScreenState extends State<RoughAssortFormScreen> {
   }
 
   void _enableFields({bool needFocus = true}) {
+    if (!_rights.canAdd) {
+      infoDialog(messageText: 'You do not have permission to add a new entry here.');
+      return;
+    }
     setState(() {
       _isEnabled = true;
       _isFromEdit = false;
@@ -178,6 +187,10 @@ class RoughAssortFormScreenState extends State<RoughAssortFormScreen> {
   }
 
   Future<void> _saveVoucher() async {
+    if (!_rights.canSave(_isFromEdit)) {
+      infoDialog(messageText: 'You do not have permission to save this entry.');
+      return;
+    }
     if (!_isEnabled) return;
     if (_selectedTypeParty.value.isEmpty) {
       infoDialog(messageText: 'Please select an Invoice / Parcel');
@@ -221,6 +234,10 @@ class RoughAssortFormScreenState extends State<RoughAssortFormScreen> {
   }
 
   Future<void> _deleteVoucher() async {
+    if (!_rights.canDelete) {
+      infoDialog(messageText: 'You do not have permission to delete here.');
+      return;
+    }
     if (!_isFromEdit || selectedRoughAssortMstID.value == 0) return;
     await defaultController.deleteRoughAssortData(
       id: selectedRoughAssortMstID.value,
@@ -273,9 +290,10 @@ class RoughAssortFormScreenState extends State<RoughAssortFormScreen> {
     final mstId = row.getCells()[0].value as int?;
     if (mstId == null) return;
 
-    final entry = defaultController.roughAssortMstList.firstWhere(
+    final entry = defaultController.roughAssortMstList.firstWhereOrNull(
       (e) => e.roughAssortMstID == mstId,
     );
+    if (entry == null) return;
     final roughEntries = defaultController.roughAssortMstDetList
         .where((e) => e.roughAssortMstID == mstId)
         .toList();
@@ -1010,6 +1028,17 @@ class RoughAssortFormScreenState extends State<RoughAssortFormScreen> {
                     allowFiltering: true,
                     allowColumnsResizing: true,
                     selectionMode: SelectionMode.single,
+                    // Clicking the row that is already selected does not fire
+                    // onSelectionChanged, so load that row again here.
+                    onCellTap: (details) {
+                      final int dataRowIndex = details.rowColumnIndex.rowIndex - 1;
+                      final selected = _dataGridController.selectedRow;
+                      if (dataRowIndex >= 0 &&
+                          selected != null &&
+                          _dataGridController.selectedIndex == dataRowIndex) {
+                        _selectVoucherFromRow(selected);
+                      }
+                    },
                     onSelectionChanged: (addedRows, _) {
                       if (addedRows.isNotEmpty) {
                         _selectVoucherFromRow(addedRows.first);

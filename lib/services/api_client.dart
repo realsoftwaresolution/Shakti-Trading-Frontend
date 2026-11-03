@@ -236,6 +236,7 @@ class ApiClient {
       ctrl.currentUserName.value = '';
       ctrl.currentUserFullName.value = '';
       ctrl.userAccessMap.clear();
+      ctrl.menuActionRights.clear();
       ctrl.menuList.clear();
       ctrl.companyCode.value = 0;
       ctrl.loginCompanyCode.value = 0;

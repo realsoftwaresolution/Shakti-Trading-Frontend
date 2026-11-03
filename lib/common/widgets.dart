@@ -588,7 +588,7 @@ double getSelectedPartyBalance(
         .where((cd) => cd.partyCode == partyCode)
         .toList();
 
-    var selectedParty = defaultController.partyMstList.firstWhere(
+    final selectedParty = defaultController.partyMstList.firstWhereOrNull(
       (partyType) => partyType.partyCode == partyCode,
     );
 
@@ -601,9 +601,10 @@ double getSelectedPartyBalance(
     });
 
     // Calculate the final balance
+    // Opening balance keeps its sign: a debit opening balance reduces the
+    // balance (same formula as the Party Ledger and Payment screens).
     double balance = (sumCredit - sumDebit) +
-        ((selectedParty.creditOpBalRs ?? 0) - (selectedParty.debitOpBalRs ?? 0))
-            .abs();
+        ((selectedParty?.creditOpBalRs ?? 0) - (selectedParty?.debitOpBalRs ?? 0));
 
     return balance;
   } else if (selectedParty != null) {
@@ -621,9 +622,10 @@ double getSelectedPartyBalance(
     });
 
     // Calculate the final balance
+    // Opening balance keeps its sign: a debit opening balance reduces the
+    // balance (same formula as the Party Ledger and Payment screens).
     double balance = (sumCredit - sumDebit) +
-        ((selectedParty.creditOpBalRs ?? 0) - (selectedParty.debitOpBalRs ?? 0))
-            .abs();
+        ((selectedParty.creditOpBalRs ?? 0) - (selectedParty.debitOpBalRs ?? 0));
 
     return balance;
   }

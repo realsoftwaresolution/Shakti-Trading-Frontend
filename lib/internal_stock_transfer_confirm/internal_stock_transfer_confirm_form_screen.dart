@@ -29,6 +29,15 @@ class InternalStockTransferConfirmFormScreen extends StatefulWidget {
 
 class InternalStockTransferConfirmFormScreenState
     extends State<InternalStockTransferConfirmFormScreen> {
+  /// Add / Edit / Delete rights of this screen (from the user's menu rights)
+  ScreenRights get _rights => defaultController.screenRights(const [
+        'frminternalstocktransferconfirmform',
+        'frminternalstocktransferconfirm',
+        'frminternaltransferconfirmform',
+        'frminternaltransferconfirm',
+        'internal stock transfer confirm',
+        'internal transfer confirm',
+      ]);
   final DefaultController defaultController = Get.find<DefaultController>();
   final TabControllerX _tabController = Get.isRegistered<TabControllerX>()
       ? Get.find<TabControllerX>()
@@ -271,6 +280,10 @@ class InternalStockTransferConfirmFormScreenState
 
   /// Action button: Add
   void _enableFields({bool needFocus = true}) {
+    if (!_rights.canAdd) {
+      infoDialog(messageText: 'You do not have permission to add a new entry here.');
+      return;
+    }
     setState(() {
       _isEnabled = true;
       _isFromView = false;
@@ -351,6 +364,10 @@ class InternalStockTransferConfirmFormScreenState
 
   /// Action button: Save
   Future<void> _handleSave() async {
+    if (!_rights.canSave(false)) {
+      infoDialog(messageText: 'You do not have permission to save this entry.');
+      return;
+    }
     if (!_isEnabled) return;
 
     if (_selectedToManagerId.value == null) {

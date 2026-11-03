@@ -211,22 +211,22 @@ class MemoPendingReportDataGridSource extends DataGridSource {
   // Fetch party code from memoIssueMstID
   int _getParty(int mstId) {
     final relevantDetails = defaultController.memoIssueList
-        .firstWhere((detail) => detail.memoIssueMstID == mstId);
-    return relevantDetails.partyCode!;
+        .firstWhereOrNull((detail) => detail.memoIssueMstID == mstId);
+    return relevantDetails?.partyCode ?? 0;
   }
 
   // Fetch broker code from memoIssueMstID
   int _getBroker(int mstId) {
     final relevantDetails = defaultController.memoIssueList
-        .firstWhere((detail) => detail.memoIssueMstID == mstId);
-    return relevantDetails.brokerCode!;
+        .firstWhereOrNull((detail) => detail.memoIssueMstID == mstId);
+    return relevantDetails?.brokerCode ?? 0;
   }
 
   // Fetch date from memoIssueMstID
   String _getDate(int mstId) {
     final relevantDetails = defaultController.memoIssueList
-        .firstWhere((detail) => detail.memoIssueMstID == mstId);
-    return relevantDetails.invoiceDate!;
+        .firstWhereOrNull((detail) => detail.memoIssueMstID == mstId);
+    return relevantDetails?.invoiceDate ?? '';
   }
 
   @override
