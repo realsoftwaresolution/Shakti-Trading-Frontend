@@ -17,7 +17,8 @@ class ApiClient {
   late Dio dio;
   Timer? _refreshTimer;
 
-  String baseUrl = 'http://localhost:8080/';
+  // String baseUrl = 'http://localhost:8080/';
+  String baseUrl = 'http:///50.62.183.116:302/';
 
   ApiClient._internal() {
     dio = Dio(
