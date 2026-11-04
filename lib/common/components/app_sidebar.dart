@@ -24,6 +24,7 @@ import 'package:real_web_rough_entry_system/branch_transfer_confirm/branch_trans
 import 'package:real_web_rough_entry_system/internal_stock_transfer/internal_stock_transfer_form_screen.dart';
 import 'package:real_web_rough_entry_system/internal_stock_transfer_confirm/internal_stock_transfer_confirm_form_screen.dart';
 import 'package:real_web_rough_entry_system/polish_purchase/polish_purchase_form_screen.dart';
+import 'package:real_web_rough_entry_system/import_entry/import_form_screen.dart';
 import 'package:real_web_rough_entry_system/purchase/purchase_form_screen.dart';
 import 'package:real_web_rough_entry_system/quality/quality_form_screen.dart';
 import 'package:real_web_rough_entry_system/report/report_screen.dart';
@@ -211,6 +212,12 @@ class _AppSidebarState extends State<AppSidebar> {
     // 2. Rough Purchase Form
     if (formLower == 'frmroughpurchaseform' || nameLower == 'rough purchase') {
       _openTab(name, icon, const PurchaseFormScreen(showHeader: false));
+      return;
+    }
+
+    // Import Form
+    if (formLower == 'frmimportform' || formLower == 'frmimport' || nameLower == 'import' || nameLower == 'import entry') {
+      _openTab(name, icon, const ImportFormScreen(showHeader: false));
       return;
     }
 
